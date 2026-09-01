@@ -9,14 +9,14 @@ permissions:
 
 jobs:
   sync:
-    if: "${{ github.event.head_commit.message == 'chore: apply upstream 1.9.6 delta' }}"
+    if: "${{ github.event.head_commit.message == 'chore: resolve upstream 1.9.6 conflicts safely' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: sync-upstream-1.9.6
           fetch-depth: 0
-      - name: Apply official 1.9.5 to 1.9.6 delta
+      - name: Apply and resolve official 1.9.6 delta
         shell: bash
         run: |
           set -euo pipefail
@@ -26,18 +26,197 @@ jobs:
           git fetch upstream --tags --force
           BASE=$(git rev-parse 'refs/tags/v1.9.5^{commit}')
           TARGET=$(git rev-parse 'refs/tags/v1.9.6^{commit}')
-          echo "Official 1.9.5: $BASE"
-          echo "Official 1.9.6: $TARGET"
           git diff --binary --full-index "$BASE" "$TARGET" > /tmp/upstream-1.9.6.patch
-          echo '--- UPSTREAM DELTA STATS ---'
-          git diff --stat "$BASE" "$TARGET"
-          if ! git apply --3way --index /tmp/upstream-1.9.6.patch; then
-            echo '--- PATCH CONFLICTS ---'
-            git diff --name-only --diff-filter=U || true
-            git status --short
-            exit 2
+
+          set +e
+          git apply --3way --index /tmp/upstream-1.9.6.patch
+          APPLY_RC=$?
+          set -e
+
+          if [ "$APPLY_RC" -ne 0 ]; then
+            mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U | sort)
+            printf 'Conflicts: %s\n' "${CONFLICTS[*]}"
+            EXPECTED=(
+              "CHANGELOG.md"
+              "gradle.properties"
+              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt"
+            )
+            mapfile -t EXPECTED_SORTED < <(printf '%s\n' "${EXPECTED[@]}" | sort)
+            if [ "$(printf '%s\n' "${CONFLICTS[@]}")" != "$(printf '%s\n' "${EXPECTED_SORTED[@]}")" ]; then
+              echo 'Unexpected conflict set; refusing to guess.'
+              exit 2
+            fi
           fi
+
+          # Changelog is documentation only: use the official 1.9.6 release history.
+          git show "$TARGET:CHANGELOG.md" > CHANGELOG.md
+
+          # Keep the Kirazium build suffix while moving the upstream base to 1.9.6.
+          git show HEAD:gradle.properties > gradle.properties
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('gradle.properties')
+          s = p.read_text()
+          old = 'version=1.9.5+kirazium.vtt.1'
+          new = 'version=1.9.6+kirazium.vtt.1'
+          if old not in s:
+              raise SystemExit('Kirazium version marker not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+          # DisplayScreen is the one functional overlap: start from our VTT-aware file, then
+          # apply all 1.9.6 audio-language persistence changes explicitly.
+          SCREEN='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt'
+          git show HEAD:"$SCREEN" > "$SCREEN"
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt')
+          s = p.read_text()
+
+          def once(old: str, new: str, label: str):
+              global s
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              s = s.replace(old, new, 1)
+
+          once(
+              '''    /** Requested audio track (stream URL); respawns audio only, not persisted. */
+    var audioTrack: String = ""
+        set(value) {
+            field = value
+            mediaPlayer?.setAudioTrack(value)
+        }
+''',
+              '''    /**
+     * Requested audio track (stream URL); respawns audio only. [MinecraftDisplayCommands.setAudioTrack]
+     * persists the track's *language* alongside this (stream URLs aren't stable across resolves), so
+     * [restoreAudioTrackIfPending] can re-apply it once a later resolve exposes a matching track.
+     */
+    var audioTrack: String = ""
+        set(value) {
+            field = value
+            pendingAudioTrackLangRestore = null
+            mediaPlayer?.setAudioTrack(value)
+        }
+
+    /**
+     * Viewer-saved audio track language still waiting for [audioTrackList] to resolve so it can be
+     * re-applied; re-armed on every video swap, cleared once tried (whether or not a match was found)
+     * or once the viewer picks a track manually in the meantime.
+     */
+    private var pendingAudioTrackLangRestore: String? = savedSettings.audioTrackLang
+
+    /** Applies [pendingAudioTrackLangRestore] once the current video has resolved its audio tracks. */
+    private fun restoreAudioTrackIfPending() {
+        val wanted = pendingAudioTrackLangRestore ?: return
+        val tracks = audioTrackList
+        if (tracks.isEmpty()) return
+        val match = tracks.firstOrNull { it.audioIdentity == wanted }
+        pendingAudioTrackLangRestore = null
+        if (match != null && match.url != currentAudioTrackUrl) audioTrack = match.url
+    }
+''',
+              'audio track persistence block',
+          )
+
+          once(
+              '''    /** Audio track / language of the current video, or `null` when idle. */
+    var lang: String? = null; private set
+
+    /** Current server-provided WebVTT URL, empty while subtitles are disabled. */
+''',
+              '''    /** Audio track / language of the current video, or `null` when idle. */
+    var lang: String? = null; private set
+
+    /**
+     * The server's own [DisplayInfo.lang] as of the last packet, tracked separately from [lang] so that
+     * substituting the viewer's saved audio-track preference into the actual load (see [updateData])
+     * never fights the server's value on every following packet.
+     */
+    private var lastPacketLang: String? = null
+
+    /** Current server-provided WebVTT URL, empty while subtitles are disabled. */
+''',
+              'packet language tracker',
+          )
+
+          once(
+              '''        waitingForInitialTimeline = requiresServerTimeline()
+        waitingSinceNanos = if (waitingForInitialTimeline) System.nanoTime() else 0L
+    }
+''',
+              '''        waitingForInitialTimeline = requiresServerTimeline()
+        waitingSinceNanos = if (waitingForInitialTimeline) System.nanoTime() else 0L
+        pendingAudioTrackLangRestore = savedSettings.audioTrackLang
+    }
+''',
+              'audio restore re-arm',
+          )
+
+          once(
+              '''        if (videoUrl != packet.url || lang != packet.lang) {
+            val previousUrl = videoUrl
+''',
+              '''        if (videoUrl != packet.url || lastPacketLang != packet.lang) {
+            val previousUrl = videoUrl
+            lastPacketLang = packet.lang
+''',
+              'server language comparison',
+          )
+
+          once(
+              '''            loadVideo(packet.url, packet.lang)
+            sendRequestSyncPacket()
+''',
+              '''            loadVideo(packet.url, ds.audioTrackLang ?: packet.lang)
+            sendRequestSyncPacket()
+''',
+              'initial saved audio language',
+          )
+
+          once(
+              '''        mediaPlayer?.tick(distance, maxRadius)
+        if (isPopoutActive) {
+''',
+              '''        mediaPlayer?.tick(distance, maxRadius)
+        restoreAudioTrackIfPending()
+        if (isPopoutActive) {
+''',
+              'audio restore tick',
+          )
+
+          # Upstream 1.9.6 also modernized this logger construction; harmless but keeps the file current.
+          s = s.replace(
+              'private val logger = LoggerFactory.getLogger("DreamDisplays/DisplayScreen")',
+              'private val logger = LoggerFactory.getLogger(javaClass)',
+              1,
+          )
+
+          # Guard our Kirazium-specific VTT functionality against accidental loss during the sync.
+          required = [
+              'private val subtitles = WebVttController(uuid)',
+              'get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)',
+              'internal fun setSubtitleSource(url: String)',
+              'setSubtitleSource(packet.subtitleUrl)',
+              'subtitles.close()',
+          ]
+          missing = [needle for needle in required if needle not in s]
+          if missing:
+              raise SystemExit('Lost Kirazium VTT markers: ' + repr(missing))
+
+          p.write_text(s)
+          PY
+
+          git add CHANGELOG.md gradle.properties "$SCREEN"
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo 'Unresolved conflicts remain:'
+            git diff --name-only --diff-filter=U
+            exit 3
+          fi
+
           rm .github/workflows/zz-sync-upstream-196.yml
           git add -A
-          git commit -m 'feat: sync official DreamDisplays 1.9.6 changes'
+          git status --short
+          git commit -m 'feat: sync DreamDisplays 1.9.6 while preserving Kirazium VTT'
           git push origin HEAD:sync-upstream-1.9.6
