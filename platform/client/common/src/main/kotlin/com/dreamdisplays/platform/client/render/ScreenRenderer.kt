@@ -244,9 +244,9 @@ object ScreenRenderer : ClientRenderService {
                 -font.width(line) / 2f,
                 (index * lineAdvancePixels).toFloat(),
                 -1,
-                true,
+                false,
                 Font.DisplayMode.NORMAL,
-                0x80000000.toInt(),
+                0,
                 0xF000F0,
             )
             //?} else
@@ -256,11 +256,11 @@ object ScreenRenderer : ClientRenderService {
                 -font.width(line) / 2f,
                 (index * lineAdvancePixels).toFloat(),
                 -1,
-                true,
+                false,
                 stack.last().pose(),
                 buffers,
                 Font.DisplayMode.NORMAL,
-                0x80000000.toInt(),
+                0,
                 0xF000F0,
             )
             */
