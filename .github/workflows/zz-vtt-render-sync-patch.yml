@@ -35,24 +35,23 @@ jobs:
           replace_once(
               media,
               "        sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()",
-              """        sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
-
-    /**
-     * Content position used by subtitles. Unlike the save/resume position, this follows the same
-     * A/V master clock that paces the frames and sound the viewer is actually seeing/hearing.
-     */
-    fun getSubtitleTimeNanos(): Long {
-        val paced = sessionManager.currentPacingNanos()
-        return if (paced >= 0L) paced else getCurrentTime()
-    }""",
+              "        sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()\n\n"
+              "    /**\n"
+              "     * Content position used by subtitles. Unlike the save/resume position, this follows the same\n"
+              "     * A/V master clock that paces the frames and sound the viewer is actually seeing/hearing.\n"
+              "     */\n"
+              "    fun getSubtitleTimeNanos(): Long {\n"
+              "        val paced = sessionManager.currentPacingNanos()\n"
+              "        return if (paced >= 0L) paced else getCurrentTime()\n"
+              "    }",
           )
 
           display = "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt"
           replace_once(
               display,
               "    val activeSubtitleLines: List<String> get() = subtitles.activeLines(currentTimeNanos)",
-              """    val activeSubtitleLines: List<String>
-        get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)""",
+              "    val activeSubtitleLines: List<String>\n"
+              "        get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)",
           )
           replace_once(
               display,
@@ -64,11 +63,11 @@ jobs:
           replace_once(
               renderer,
               "        val textScale = desiredLineHeightBlocks / (displayScreen.height * lineAdvancePixels)",
-              """        // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so
-        // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.
-        val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
-        val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()
-        val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()""",
+              "        // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so\n"
+              "        // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.\n"
+              "        val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()\n"
+              "        val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()\n"
+              "        val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()",
           )
           replace_once(
               renderer,
