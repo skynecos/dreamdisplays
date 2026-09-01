@@ -1,0 +1,48 @@
+name: Temporary subtitle clean render patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'chore: apply subtitle clean render patch' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Remove conflicting font layers
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt')
+          s = p.read_text()
+          old = '''                -1,
+                true,
+                Font.DisplayMode.NORMAL,
+                0x80000000.toInt(),
+                0xF000F0,'''
+          new = '''                -1,
+                false,
+                Font.DisplayMode.NORMAL,
+                0,
+                0xF000F0,'''
+          count = s.count(old)
+          if count != 2:
+              raise SystemExit(f'expected 2 subtitle font blocks, found {count}')
+          p.write_text(s.replace(old, new))
+          PY
+          rm .github/workflows/zz-subtitle-clean-render.yml
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'Kirazium CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt .github/workflows/zz-subtitle-clean-render.yml
+          git commit -m 'fix: render subtitles as a clean single layer'
+          git push origin HEAD:main
