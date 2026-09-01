@@ -402,8 +402,9 @@ class DisplayScreen(
     /** Asynchronously loaded immutable WebVTT track for this display. */
     private val subtitles = WebVttController(uuid)
 
-    /** Subtitle lines active at the exact media-player clock position. */
-    val activeSubtitleLines: List<String> get() = subtitles.activeLines(currentTimeNanos)
+    /** Subtitle lines active at the same A/V master-clock position used to present video/audio. */
+    val activeSubtitleLines: List<String>
+        get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)
 
     /** Updates the VTT source without touching video decoding or the playback timeline. */
     internal fun setSubtitleSource(url: String) {

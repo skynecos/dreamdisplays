@@ -188,7 +188,7 @@ object ScreenRenderer : ClientRenderService {
     private const val SUBTITLE_WIDTH_FRACTION = 0.88f
     private const val SUBTITLE_HEIGHT_FRACTION = 0.42f
     private const val SUBTITLE_BOTTOM_MARGIN = 0.075f
-    private const val SUBTITLE_LIFT = 0.028f
+    private const val SUBTITLE_LIFT = 0.04f
     private const val SUBTITLE_MAX_LINES = 4
 
     /** Draws active WebVTT cues in world space, slightly in front of the video plane. */
@@ -205,9 +205,13 @@ object ScreenRenderer : ClientRenderService {
         val font = minecraft.font
         val lineAdvancePixels = font.lineHeight + 2
         val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
-        val textScale = desiredLineHeightBlocks / (displayScreen.height * lineAdvancePixels)
-        val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScale).toInt().coerceIn(32, 720)
-        val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScale))
+        // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so
+        // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.
+        val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
+        val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()
+        val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()
+        val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 4096)
+        val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScaleY))
             .toInt()
             .coerceAtLeast(1)
         val lines = wrapSubtitleLines(rawLines, font, wrapPixels)
@@ -217,7 +221,7 @@ object ScreenRenderer : ClientRenderService {
         val subtitleSubmitter = submitText ?: return
         //?}
 
-        val totalHeight = lines.size * lineAdvancePixels * textScale
+        val totalHeight = lines.size * lineAdvancePixels * textScaleY
         stack.pushPose()
         DisplayGeometry.liftTowardViewer(stack, displayScreen.facing, SUBTITLE_LIFT)
         DisplayGeometry.applyScreenTransform(
@@ -227,7 +231,7 @@ object ScreenRenderer : ClientRenderService {
             displayScreen.height,
         )
         stack.translate(0.5f, SUBTITLE_BOTTOM_MARGIN + totalHeight, 0f)
-        stack.scale(textScale, -textScale, 1f)
+        stack.scale(textScaleX, -textScaleY, 1f)
 
         //? if <26.2 {
         val buffers = minecraft.renderBuffers().bufferSource()
