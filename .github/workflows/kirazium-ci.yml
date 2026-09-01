@@ -1,0 +1,20 @@
+name: Kirazium VTT CI
+
+on:
+  push:
+    branches: [ vtt-local-media-source ]
+  workflow_dispatch:
+
+concurrency:
+  group: kirazium-vtt-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+    with:
+      # One Linux native bundle is enough to compile and validate this feature branch.
+      pull_request: true
