@@ -274,12 +274,34 @@ class DisplayScreen(
         }
     }
 
-    /** Requested audio track (stream URL); respawns audio only, not persisted. */
+    /**
+     * Requested audio track (stream URL); respawns audio only. [MinecraftDisplayCommands.setAudioTrack]
+     * persists the track's *language* alongside this (stream URLs aren't stable across resolves), so
+     * [restoreAudioTrackIfPending] can re-apply it once a later resolve exposes a matching track.
+     */
     var audioTrack: String = ""
         set(value) {
             field = value
+            pendingAudioTrackLangRestore = null
             mediaPlayer?.setAudioTrack(value)
         }
+
+    /**
+     * Viewer-saved audio track language still waiting for [audioTrackList] to resolve so it can be
+     * re-applied; re-armed on every video swap, cleared once tried (whether or not a match was found)
+     * or once the viewer picks a track manually in the meantime.
+     */
+    private var pendingAudioTrackLangRestore: String? = savedSettings.audioTrackLang
+
+    /** Applies [pendingAudioTrackLangRestore] once the current video has resolved its audio tracks. */
+    private fun restoreAudioTrackIfPending() {
+        val wanted = pendingAudioTrackLangRestore ?: return
+        val tracks = audioTrackList
+        if (tracks.isEmpty()) return
+        val match = tracks.firstOrNull { it.audioIdentity == wanted }
+        pendingAudioTrackLangRestore = null
+        if (match != null && match.url != currentAudioTrackUrl) audioTrack = match.url
+    }
 
     /** Broadcast pins to cap; otherwise applies distance steps. */
     private fun effectiveQuality(requested: VideoQuality = quality): VideoQuality {
@@ -395,6 +417,13 @@ class DisplayScreen(
 
     /** Audio track / language of the current video, or `null` when idle. */
     var lang: String? = null; private set
+
+    /**
+     * The server's own [DisplayInfo.lang] as of the last packet, tracked separately from [lang] so that
+     * substituting the viewer's saved audio-track preference into the actual load (see [updateData])
+     * never fights the server's value on every following packet.
+     */
+    private var lastPacketLang: String? = null
 
     /** Current server-provided WebVTT URL, empty while subtitles are disabled. */
     var subtitleUrl: String = ""; private set
@@ -517,6 +546,7 @@ class DisplayScreen(
         this.lang = lang
         waitingForInitialTimeline = requiresServerTimeline()
         waitingSinceNanos = if (waitingForInitialTimeline) System.nanoTime() else 0L
+        pendingAudioTrackLangRestore = savedSettings.audioTrackLang
     }
 
     /** True while the screen is holding back the picture until the server's first timeline arrives. */
@@ -595,8 +625,9 @@ class DisplayScreen(
         owner = Minecraft.getInstance().player?.gameProfile?.id?.toString() == packet.ownerId.toString()
         setSubtitleSource(packet.subtitleUrl)
 
-        if (videoUrl != packet.url || lang != packet.lang) {
+        if (videoUrl != packet.url || lastPacketLang != packet.lang) {
             val previousUrl = videoUrl
+            lastPacketLang = packet.lang
             if (clientUrlOverride && canSetVideoHere) return
             if (clientUrlOverride) {
                 clientUrlOverride = false
@@ -619,7 +650,7 @@ class DisplayScreen(
 
             paused = false
             if (packet.url != previousUrl) savedTimeNanos = 0L
-            loadVideo(packet.url, packet.lang)
+            loadVideo(packet.url, ds.audioTrackLang ?: packet.lang)
             sendRequestSyncPacket()
         }
     }
@@ -761,6 +792,9 @@ class DisplayScreen(
 
     /** Whether the active fullscreen overlay should stay open (re-showing) past the video's end instead of auto-closing. */
     private var fullscreenLoop = false
+
+    /** [fullscreenLoop] exposed to [DisplayPlaybackHost]. */
+    internal val isFullscreenLoop: Boolean get() = fullscreenLoop
 
     /** Last applied fullscreen state; survives server switch but not display re-creation. */
     @Volatile
@@ -1049,6 +1083,7 @@ class DisplayScreen(
         val maxRadius = if (isPopoutActive) Double.MAX_VALUE else ClientStateManager.config.defaultDistance.toDouble()
         val distance = getDistanceToScreen(pos)
         mediaPlayer?.tick(distance, maxRadius)
+        restoreAudioTrackIfPending()
         if (isPopoutActive) {
             if (distanceQualitySteps != 0) {
                 distanceQualitySteps = 0
@@ -1098,7 +1133,7 @@ class DisplayScreen(
 
     companion object {
         /** Logger for replay-capture and diagnostic messages. */
-        private val logger = LoggerFactory.getLogger("DreamDisplays/DisplayScreen")
+        private val logger = LoggerFactory.getLogger(javaClass)
 
         /** Ticks between voxel-acoustics re-probes; the DSP chain smooths across this gap. */
         private const val ENV_PROBE_INTERVAL_TICKS = 2

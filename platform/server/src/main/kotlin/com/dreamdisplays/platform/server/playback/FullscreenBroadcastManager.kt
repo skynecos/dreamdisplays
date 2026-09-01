@@ -23,7 +23,7 @@ data class FullscreenRadiusTarget(val world: String, val x: Double, val y: Doubl
 /** Manages server-forced fullscreen broadcast sessions targeting players by name or radius. */
 object FullscreenBroadcastManager {
     /** Logger. */
-    private val logger = LoggerFactory.getLogger("DreamDisplays/FullscreenBroadcastManager")
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /** Minimum interval between re-evaluating radius membership and refreshing already-shown targets. */
     private const val TICK_MS = 1_000L
@@ -198,7 +198,10 @@ object FullscreenBroadcastManager {
         )
     }
 
-    /** Applies a client's [FullscreenAckAction] for [sessionId]. Dismissing an unforced session drops the player from its targets. */
+    /**
+     * Applies a client's [FullscreenAckAction] for [sessionId]. Dismissing an unforced session (Esc)
+     * drops the player from its targets and means stop.
+     */
     fun handleAck(sessionId: String, playerId: UUID, action: FullscreenAckAction) {
         val session = sessions[sessionId] ?: return
         when (action) {
@@ -212,6 +215,7 @@ object FullscreenBroadcastManager {
             FullscreenAckAction.DISMISSED -> if (!session.forced) {
                 session.shownTo.remove(playerId)
                 session.dismissedBy.add(playerId)
+                if (session.shownTo.isEmpty()) stop(sessionId)
             }
 
             FullscreenAckAction.MINIMIZED -> {

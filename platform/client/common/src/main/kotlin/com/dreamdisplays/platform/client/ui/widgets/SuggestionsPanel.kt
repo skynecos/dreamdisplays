@@ -4,6 +4,9 @@ import com.dreamdisplays.api.media.search.model.MediaSearchResult
 import com.dreamdisplays.platform.client.render.Thumbnails
 import com.dreamdisplays.platform.client.ui.GuiGraphicsCompat
 import com.dreamdisplays.platform.client.ui.drawText
+//? if <1.21.11 {
+import com.dreamdisplays.platform.client.ui.enableScissorPoseAware
+//?}
 import com.dreamdisplays.platform.client.ui.kit.*
 import com.dreamdisplays.platform.client.ui.widgets.SuggestionsPanel.Companion.THUMB_H
 //? if >=1.21.11 {
@@ -26,6 +29,7 @@ import net.minecraft.resources.Identifier
 /*import net.minecraft.resources.ResourceLocation as Identifier*/
 import net.minecraft.sounds.SoundEvents
 import org.lwjgl.glfw.GLFW
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -37,7 +41,7 @@ class SuggestionsPanel(
 ) : UiWidget(Component.translatable("dreamdisplays.button.suggestions")) {
 
     init {
-        controller.onResults = { scrollOffset = 0 }
+        controller.onResults = { scrollOffset = 0; scrollOffsetF = 0f; targetScroll = 0 }
     }
 
     private val searchBox: EditBox
@@ -53,6 +57,11 @@ class SuggestionsPanel(
     var available: () -> Boolean = { true }
 
     private var scrollOffset: Int = 0
+
+    /** Sub-pixel shadow of [scrollOffset], eased toward [targetScroll] each frame; see [easeScroll]. */
+    private var scrollOffsetF: Float = 0f
+    private var targetScroll: Int = 0
+    private var lastScrollFrameNanos = 0L
     private var hoveredCard: Int = -1
 
     /** Scrollbar geometry captured in [drawScrollbar] so the mouse handlers can drag the thumb. */
@@ -159,13 +168,11 @@ class SuggestionsPanel(
      */
     private fun textBlockH(lines: Int): Int {
         val lh = Minecraft.getInstance().font.lineHeight
-        // top gap (drawCard's `+ 4`) + that many title lines (each `lineHeight + 1`) + gap before the
-        // meta row (`+ 1`) + the meta row itself (one line) + breathing room below it.
         return 4 + lines * (lh + 1) + 1 + lh + BOTTOM_PAD
     }
 
     private fun dynThumbH(): Int {
-        val available = lastStripH - 2 - 3 - CARD_TEXT_H - 2
+        val available = lastStripH - 2 - 3 - CARD_TEXT_H - 2 - BOTTOM_MARGIN
         return max(30, min(THUMB_H, available))
     }
 
@@ -239,10 +246,15 @@ class SuggestionsPanel(
         val th = thumbH(viewportW)
         val refCh = maxCardH(viewportW)
         val maxOff = maxScroll(viewportW, viewportH)
-        scrollOffset = scrollOffset.coerceIn(0, maxOff)
+        targetScroll = targetScroll.coerceIn(0, maxOff)
+        scrollOffsetF = easeScroll(scrollOffsetF.coerceIn(0f, maxOff.toFloat()), targetScroll.toFloat())
+        scrollOffset = scrollOffsetF.roundToInt()
 
         val cards = controller.visibleCards
+        //? if >=1.21.11 {
         g.enableScissor(stripLeft, stripTop, stripRight, stripBottom)
+        //?} else
+        /*g.enableScissorPoseAware(stripLeft, stripTop, stripRight, stripBottom)*/
         hoveredCard = -1
         val rowY = if (vertical) 0 else stripTop + max(0, (viewportH - refCh) / 2)
         var pos = (if (vertical) stripTop else stripLeft) - scrollOffset
@@ -278,10 +290,7 @@ class SuggestionsPanel(
             }
         }
         g.disableScissor()
-        // Fires once the user has scrolled within one viewport of the end of the loaded cards; cheap
-        // to call every frame since loadMoreIfNeeded() no-ops while a page is already in flight or the
-        // list is exhausted.
-        if (cards.isNotEmpty() && scrollOffset >= maxOff - viewportH) {
+        if (cards.isNotEmpty() && targetScroll >= maxOff / 2) {
             controller.loadMoreIfNeeded()
         }
         //? if >=1.21.11 {
@@ -352,15 +361,28 @@ class SuggestionsPanel(
                 cross >= sbCross - SB_GRAB && cross <= sbCross + 2 + SB_GRAB
     }
 
-    /** Maps a cursor position along the scroll axis to [scrollOffset], centering the thumb on it. */
     private fun scrollFromPos(pos: Double) {
         val travel = sbViewport - sbThumbLen
         if (travel <= 0) {
             scrollOffset = 0
+            scrollOffsetF = 0f
+            targetScroll = 0
             return
         }
         val rel = (pos - sbStart - sbThumbLen / 2.0).coerceIn(0.0, travel.toDouble())
-        scrollOffset = ((rel / travel) * sbMaxOff).roundToInt().coerceIn(0, sbMaxOff)
+        val offset = ((rel / travel) * sbMaxOff).roundToInt().coerceIn(0, sbMaxOff)
+        scrollOffset = offset
+        scrollOffsetF = offset.toFloat()
+        targetScroll = offset
+    }
+
+    private fun easeScroll(current: Float, target: Float): Float {
+        val now = System.nanoTime()
+        val dt = if (lastScrollFrameNanos == 0L) 0.016f else ((now - lastScrollFrameNanos) / 1e9f).coerceIn(0f, 0.1f)
+        lastScrollFrameNanos = now
+        val diff = target - current
+        if (abs(diff) < 0.05f) return target
+        return current + diff * minOf(1f, dt * SCROLL_EASE_RATE)
     }
 
     /**
@@ -404,13 +426,11 @@ class SuggestionsPanel(
         val hoverBorder = ambient?.let { lightenRgb(it, 0.40f) } ?: UiTheme.CARD_BORDER_HOVER
         g.fill(x, y, x + w, y + cardH, if (hover) hoverBg else UiTheme.CARD_BG)
 
-        // Full-bleed thumbnail across the whole card width (no side inset): it's the largest the
-        // card can hold and the width/THUMB_H ratio matches 16:9, so the image stays crisp and
-        // un-stretched instead of being shrunk into a bordered box.
-        val thumbX = x
         val thumbY = y
-        val thumbW = w
+        val thumbW = if (vertical) w else (thumbH.toDouble() * CARD_W / THUMB_H).roundToInt().coerceAtMost(w)
+        val thumbX = x + (w - thumbW) / 2
         val thumb = cardThumbnail(info)
+
         // A card still has an image on the way when it is a custom-art card, a YouTube result whose
         // thumbnail is downloading, or a platform result carrying a thumbnail URL. Anything else has
         // nothing to load, so a shimmer would promise an image that never arrives - draw the plate.
@@ -484,27 +504,38 @@ class SuggestionsPanel(
         }
 
         textY += 1
+        var metaX = textX
+        var metaW = textW
+        val avatar = info.channelAvatarUrl?.let { Thumbnails.get(it) }
+        if (avatar != null) {
+            val iconSize = f.lineHeight
+            metaX += iconSize + 3
+            metaW -= iconSize + 3
+        }
+        if (info.isVerified) {
+            val badgeSize = f.lineHeight - 1
+            metaX += badgeSize + 3
+            metaW -= badgeSize + 3
+        }
+
         var meta = info.uploader ?: ""
-        val views = info.formatViews()
+        val showViews = w >= CARD_W
+        val views = if (showViews) info.formatViews() else ""
         if (views.isNotEmpty()) {
-            meta = if (meta.isEmpty()) views
-            else UiText.trim(f, meta, max(20, textW - f.width(" • $views"))) + " • " + views
+            meta = if (meta.isEmpty()) {
+                if (f.width(views) <= metaW) views else ""
+            } else {
+                val viewsW = f.width(" • $views")
+                val combined = if (viewsW >= metaW) null else "${UiText.trim(f, meta, metaW - viewsW)} • $views"
+                if (combined != null && f.width(combined) <= metaW) combined else meta
+            }
         }
         if (meta.isNotEmpty()) {
-            var metaX = textX
-            var metaW = textW
-            val avatar = info.channelAvatarUrl?.let { Thumbnails.get(it) }
-            if (avatar != null) {
-                val iconSize = f.lineHeight
-                blitTexture(g, avatar, metaX, textY - 1, iconSize, iconSize)
-                metaX += iconSize + 3
-                metaW -= iconSize + 3
-            }
+            if (avatar != null) blitTexture(g, avatar, textX, textY - 1, f.lineHeight, f.lineHeight)
             if (info.isVerified) {
                 val badgeSize = f.lineHeight - 1
-                g.drawVerifiedBadge(metaX, textY - 1, badgeSize, UiTheme.ACCENT)
-                metaX += badgeSize + 3
-                metaW -= badgeSize + 3
+                val badgeX = textX + if (avatar != null) f.lineHeight + 3 else 0
+                g.drawVerifiedBadge(badgeX, textY - 1, badgeSize, UiTheme.ACCENT)
             }
             g.drawText(f, UiText.trim(f, meta, metaW), metaX, textY, UiTheme.TEXT_META, true)
         }
@@ -560,7 +591,7 @@ class SuggestionsPanel(
         val viewportW = stripRight() - stripLeft()
         val maxOff = maxScroll(viewportW, stripBottom - stripTop)
         val delta = if (vertical) dy * 32 else (if (dx != 0.0) dx else dy) * 32
-        scrollOffset = (scrollOffset - delta.toInt()).coerceIn(0, maxOff)
+        targetScroll = (targetScroll - delta.toInt()).coerceIn(0, maxOff)
         return true
     }
 
@@ -748,6 +779,8 @@ class SuggestionsPanel(
     companion object {
         private const val HEADER_H = 14
 
+        private const val SCROLL_EASE_RATE = 8f
+
         /** Extra px around the thin scrollbar that still grabs it (a forgiving drag target). */
         private const val SB_GRAB = 4
         private const val CARD_GAP = 6
@@ -763,6 +796,8 @@ class SuggestionsPanel(
         /** Internal vertical paddings a card adds around its thumbnail + text (see [dynThumbH]/[dynCardH]). */
         private const val CARD_INNER_PAD = 2 + 3 + 2
 
+        private const val BOTTOM_MARGIN = 6
+
         /**
          * Vertical space the panel spends on its title + search row before the card strip begins,
          * plus the bottom padding below it. Keep in sync with [stripTop]/[stripBottom].
@@ -770,9 +805,9 @@ class SuggestionsPanel(
         const val STRIP_CHROME_H = 10 + HEADER_H + 6 + SEARCH_H + 8 + 10
 
         /** Strip viewport height at which horizontal cards reach their full [THUMB_H] thumbnails. */
-        const val FULL_CARD_VIEWPORT_H = CARD_H + CARD_INNER_PAD
+        const val FULL_CARD_VIEWPORT_H = CARD_H + CARD_INNER_PAD + BOTTOM_MARGIN
 
         /** Smallest strip viewport that still shows a card (min 30px thumbnail) without clipping it. */
-        const val MIN_CARD_VIEWPORT_H = 30 + CARD_TEXT_H + CARD_INNER_PAD
+        const val MIN_CARD_VIEWPORT_H = 30 + CARD_TEXT_H + CARD_INNER_PAD + BOTTOM_MARGIN
     }
 }
