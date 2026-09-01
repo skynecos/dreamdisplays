@@ -130,7 +130,7 @@ object LocalMediaServer {
         return publicUrl(loaded, local.relative)
     }
 
-    /** Absolute folder into which the operator places `videos/*.mp4` and `subtitles/*.vtt`. */
+    /** Absolute folder containing the operator-managed `videos` and `subtitles` directories. */
     fun mediaDirectory(): String = settings?.root?.toString() ?: "plugins/DreamDisplays/media"
 
     private fun loadSettings(plugin: PaperServer): Settings {
