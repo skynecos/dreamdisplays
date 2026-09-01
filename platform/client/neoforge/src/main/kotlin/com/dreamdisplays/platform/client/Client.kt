@@ -13,6 +13,7 @@ import net.minecraft.client.Minecraft
 //? if >=26.2 {
 import net.minecraft.network.chat.Style
 import net.minecraft.util.FormattedCharSequence
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent
 //?}
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.neoforged.api.distmarker.Dist
@@ -70,8 +71,9 @@ class Client(modEventBus: IEventBus) : DreamMod {
     //?}
 
     //? if >=26 {
+    //? if >=26.2 {
     @SubscribeEvent
-    fun onRenderDisplays(event: RenderLevelStageEvent.AfterOpaqueFeatures) {
+    fun onRenderDisplays(event: SubmitCustomGeometryEvent) {
         val mc = Minecraft.getInstance()
         if (mc.level == null || mc.player == null) return
         val camera = mainCamera(mc)
@@ -79,7 +81,6 @@ class Client(modEventBus: IEventBus) : DreamMod {
         ScreenRenderer.render(
             event.poseStack,
             camera,
-            //? if >=26.2 {
             submitText = WorldTextSubmitter { stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
                 event.submitNodeCollector.submitText(
                     stack,
@@ -94,9 +95,20 @@ class Client(modEventBus: IEventBus) : DreamMod {
                     0,
                 )
             },
-            //?}
         )
     }
+    //?} else
+    /*
+    @SubscribeEvent
+    fun onRenderDisplays(event: RenderLevelStageEvent.AfterOpaqueFeatures) {
+        val mc = Minecraft.getInstance()
+        if (mc.level == null || mc.player == null) return
+        val camera = mainCamera(mc)
+        UnshadedDisplayPass.capture(event.poseStack, camera)
+        ScreenRenderer.render(event.poseStack, camera)
+    }
+    */
+    //?}
     //?} else
     /*
     //? if ==1.21.11 {

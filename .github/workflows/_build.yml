@@ -242,10 +242,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          brew install ffmpeg pkg-config
-          ffmpeg_ver="$(brew list --versions ffmpeg | awk '{print $2}')"
+          brew install ffmpeg@7 pkg-config
+          ffmpeg_ver="$(brew list --versions ffmpeg@7 | awk '{print $2}')"
           echo "FFMPEG_CACHE_SUFFIX=ffmpeg-${ffmpeg_ver}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg)/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
@@ -466,7 +466,7 @@ jobs:
                 ;;
               macOS)
                 if command -v brew >/dev/null 2>&1; then
-                  brew info --json=v2 ffmpeg > "$license_dir/ffmpeg-homebrew.json" 2>/dev/null || true
+                  brew info --json=v2 ffmpeg@7 > "$license_dir/ffmpeg-homebrew.json" 2>/dev/null || true
                 fi
                 ;;
             esac
