@@ -1,0 +1,50 @@
+name: Temporary 1.9.6 fullscreen loop fix
+
+on:
+  push:
+    branches: [sync-upstream-1.9.6]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "${{ github.event.head_commit.message == 'chore: prepare 1.9.6 fullscreen loop compatibility fix' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          ref: sync-upstream-1.9.6
+      - name: Add upstream fullscreen loop getter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt')
+          s = p.read_text()
+          old = '''    /** Whether the active fullscreen overlay should stay open (re-showing) past the video's end instead of auto-closing. */
+              private var fullscreenLoop = false
+          '''
+          # YAML block indentation may be stripped differently by the runner; match by exact logical lines instead.
+          lines = s.splitlines()
+          target = '    private var fullscreenLoop = false'
+          if lines.count(target) != 1:
+              raise SystemExit(f'expected exactly one fullscreenLoop field, found {lines.count(target)}')
+          i = lines.index(target)
+          getter = '    internal val isFullscreenLoop: Boolean get() = fullscreenLoop'
+          if getter in lines:
+              raise SystemExit('isFullscreenLoop already exists')
+          insert = [
+              '',
+              '    /** [fullscreenLoop] exposed to [DisplayPlaybackHost]. */',
+              getter,
+          ]
+          lines[i+1:i+1] = insert
+          p.write_text('\n'.join(lines) + '\n')
+          PY
+          git config user.name 'Kirazium CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt
+          git commit -m 'fix: restore 1.9.6 fullscreen loop host getter'
+          git push origin HEAD:sync-upstream-1.9.6
