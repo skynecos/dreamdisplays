@@ -26,12 +26,24 @@ import com.mojang.blaze3d.vertex.VertexFormat
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.Font
-//? if >=26.2 {
-import net.minecraft.client.gui.font.TextRenderable
-//?}
 import net.minecraft.world.phys.Vec3
 import kotlin.math.floor
 import kotlin.math.sin
+
+/** Version-neutral bridge for submitting world-space text through the active level renderer. */
+fun interface WorldTextSubmitter {
+    fun submit(
+        stack: PoseStack,
+        text: String,
+        x: Float,
+        y: Float,
+        color: Int,
+        shadow: Boolean,
+        mode: Font.DisplayMode,
+        backgroundColor: Int,
+        packedLight: Int,
+    )
+}
 
 /** Renders screens in the world. Better not to touch this shit. */
 object ScreenRenderer : ClientRenderService {
@@ -43,7 +55,19 @@ object ScreenRenderer : ClientRenderService {
      * for [UnshadedDisplayPass]'s second draw of a frame already on screen.
      */
     fun render(stack: PoseStack, camera: Camera, replay: Boolean = false) {
-        render(stack, camera, replay) { type, appendVertices ->
+        render(stack, camera, replay, submitText = null) { type, appendVertices ->
+            drawImmediate(stack, type, appendVertices)
+        }
+    }
+
+    /** Immediate-quad render entry point with a platform-owned text submission bridge. */
+    fun render(
+        stack: PoseStack,
+        camera: Camera,
+        replay: Boolean = false,
+        submitText: WorldTextSubmitter,
+    ) {
+        render(stack, camera, replay, submitText) { type, appendVertices ->
             drawImmediate(stack, type, appendVertices)
         }
     }
@@ -75,7 +99,13 @@ object ScreenRenderer : ClientRenderService {
     override val registeredCount: Int; get() = DisplayRegistry.getScreens().count { it.hasTexture }
 
     /** Iterates all registered screens and lets the caller submit quads through the active renderer. */
-    fun render(stack: PoseStack, camera: Camera, replay: Boolean = false, drawQuad: QuadRenderer) {
+    fun render(
+        stack: PoseStack,
+        camera: Camera,
+        replay: Boolean = false,
+        submitText: WorldTextSubmitter? = null,
+        drawQuad: QuadRenderer,
+    ) {
         val cameraPos =
             //? if >=1.21.11 {
             camera.position()
@@ -91,7 +121,7 @@ object ScreenRenderer : ClientRenderService {
             val relativePos = screenCenter.subtract(cameraPos)
             stack.translate(relativePos.x, relativePos.y, relativePos.z)
 
-            renderScreenTexture(displayScreen, stack, replay, drawQuad)
+            renderScreenTexture(displayScreen, stack, replay, submitText, drawQuad)
 
             stack.popPose()
         }
@@ -109,7 +139,11 @@ object ScreenRenderer : ClientRenderService {
 
     /** Translates and rotates the pose for [displayScreen]'s facing direction, then renders the video or fallback color. */
     private fun renderScreenTexture(
-        displayScreen: DisplayScreen, stack: PoseStack, replay: Boolean, drawQuad: QuadRenderer,
+        displayScreen: DisplayScreen,
+        stack: PoseStack,
+        replay: Boolean,
+        submitText: WorldTextSubmitter?,
+        drawQuad: QuadRenderer,
     ) {
         if (!replay) displayScreen.fitTexture()
 
@@ -134,7 +168,7 @@ object ScreenRenderer : ClientRenderService {
                 lift,
             )
         }
-        if (!replay) renderSubtitle(displayScreen, stack)
+        if (!replay) renderSubtitle(displayScreen, stack, submitText)
     }
 
     /** Draws a unit quad using the screen's GPU texture, ramping up the first-appear fade. */
@@ -158,7 +192,11 @@ object ScreenRenderer : ClientRenderService {
     private const val SUBTITLE_MAX_LINES = 4
 
     /** Draws active WebVTT cues in world space, slightly in front of the video plane. */
-    private fun renderSubtitle(displayScreen: DisplayScreen, stack: PoseStack) {
+    private fun renderSubtitle(
+        displayScreen: DisplayScreen,
+        stack: PoseStack,
+        submitText: WorldTextSubmitter?,
+    ) {
         if (!displayScreen.isVideoStarted) return
         val rawLines = displayScreen.activeSubtitleLines
         if (rawLines.isEmpty()) return
@@ -175,6 +213,9 @@ object ScreenRenderer : ClientRenderService {
         val lines = wrapSubtitleLines(rawLines, font, wrapPixels)
             .take(minOf(SUBTITLE_MAX_LINES, maxLinesByHeight))
         if (lines.isEmpty()) return
+        //? if >=26.2 {
+        val subtitleSubmitter = submitText ?: return
+        //?}
 
         val totalHeight = lines.size * lineAdvancePixels * textScale
         stack.pushPose()
@@ -188,27 +229,22 @@ object ScreenRenderer : ClientRenderService {
         stack.translate(0.5f, SUBTITLE_BOTTOM_MARGIN + totalHeight, 0f)
         stack.scale(textScale, -textScale, 1f)
 
-        val buffers =
-            //? if >=26.2 {
-            minecraft.gameRenderer.renderBuffers().bufferSource()
-            //?} else
-            /*minecraft.renderBuffers().bufferSource()*/
+        //? if <26.2 {
+        val buffers = minecraft.renderBuffers().bufferSource()
+        //?}
         lines.forEachIndexed { index, line ->
             //? if >=26.2 {
-            val prepared = font.prepareText(
+            subtitleSubmitter.submit(
+                stack,
                 line,
                 -font.width(line) / 2f,
                 (index * lineAdvancePixels).toFloat(),
                 -1,
                 true,
+                Font.DisplayMode.POLYGON_OFFSET,
                 0x80000000.toInt(),
+                0xF000F0,
             )
-            prepared.visit(object : Font.GlyphVisitor {
-                override fun acceptRenderable(renderable: TextRenderable) {
-                    val buffer = buffers.getBuffer(renderable.renderType(Font.DisplayMode.POLYGON_OFFSET))
-                    renderable.render(stack.last().pose(), buffer, 0xF000F0, false)
-                }
-            })
             //?} else
             /*
             font.drawInBatch(

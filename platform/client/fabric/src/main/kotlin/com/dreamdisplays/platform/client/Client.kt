@@ -32,6 +32,7 @@ import com.dreamdisplays.platform.client.net.V2Payload
 import com.dreamdisplays.platform.client.platform.FabricPlatformIntegrationProvider
 import com.dreamdisplays.platform.client.render.ScreenRenderer
 import com.dreamdisplays.platform.client.render.UnshadedDisplayPass
+import com.dreamdisplays.platform.client.render.WorldTextSubmitter
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
 import net.fabricmc.api.ClientModInitializer
@@ -41,6 +42,11 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
+//? if >=26.2 {
+import net.minecraft.client.renderer.SubmitNodeCollector
+import net.minecraft.network.chat.Style
+import net.minecraft.util.FormattedCharSequence
+//?}
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import org.slf4j.LoggerFactory
 import java.lang.reflect.Proxy
@@ -187,7 +193,13 @@ class Client : ClientModInitializer, Mod {
         }
 
         runCatching {
-            ScreenRenderer.render(context.poseStack(), camera) { type, appendVertices ->
+            ScreenRenderer.render(
+                context.poseStack(),
+                camera,
+                //? if >=26.2 {
+                submitText = worldTextSubmitter(submitNodeCollector),
+                //?}
+            ) { type, appendVertices ->
                 submitCustomGeometry(context.poseStack(), submitNodeCollector, type, appendVertices)
             }
         }.onFailure { e ->
@@ -253,6 +265,25 @@ class Client : ClientModInitializer, Mod {
                 .also { submitCustomGeometryMethod = it }
         method.invoke(submitNodeCollector, stack, type, renderer)
     }
+
+    //? if >=26.2 {
+    /** Submits subtitle glyphs to the same deferred level collector as the display geometry. */
+    private fun worldTextSubmitter(submitNodeCollector: Any) = WorldTextSubmitter {
+            stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
+        (submitNodeCollector as SubmitNodeCollector).submitText(
+            stack,
+            x,
+            y,
+            FormattedCharSequence.forward(text, Style.EMPTY),
+            shadow,
+            mode,
+            packedLight,
+            color,
+            backgroundColor,
+            0,
+        )
+    }
+    //?}
     //?}
 
     /** Main camera accessor. */

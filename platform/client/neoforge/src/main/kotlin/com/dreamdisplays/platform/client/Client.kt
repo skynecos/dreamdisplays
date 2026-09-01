@@ -6,9 +6,14 @@ import com.dreamdisplays.platform.client.platform.NeoForgePlatformIntegrationPro
 import com.dreamdisplays.api.platform.service.keys.PlatformServices
 import com.dreamdisplays.platform.client.render.ScreenRenderer
 import com.dreamdisplays.platform.client.render.UnshadedDisplayPass
+import com.dreamdisplays.platform.client.render.WorldTextSubmitter
 import com.dreamdisplays.platform.client.Mod as DreamMod
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
+//? if >=26.2 {
+import net.minecraft.network.chat.Style
+import net.minecraft.util.FormattedCharSequence
+//?}
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.IEventBus
@@ -71,7 +76,26 @@ class Client(modEventBus: IEventBus) : DreamMod {
         if (mc.level == null || mc.player == null) return
         val camera = mainCamera(mc)
         UnshadedDisplayPass.capture(event.poseStack, camera)
-        ScreenRenderer.render(event.poseStack, camera)
+        ScreenRenderer.render(
+            event.poseStack,
+            camera,
+            //? if >=26.2 {
+            submitText = WorldTextSubmitter { stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
+                event.submitNodeCollector.submitText(
+                    stack,
+                    x,
+                    y,
+                    FormattedCharSequence.forward(text, Style.EMPTY),
+                    shadow,
+                    mode,
+                    packedLight,
+                    color,
+                    backgroundColor,
+                    0,
+                )
+            },
+            //?}
+        )
     }
     //?} else
     /*
