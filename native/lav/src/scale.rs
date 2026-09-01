@@ -20,8 +20,10 @@ const MIN_BAND_ROWS: usize = 64;
 const MAX_BANDS: usize = 4;
 
 /// Bilinear beats fast-bilinear here on both counts: it is measurably quicker on this path and it
-/// widens its filter when downscaling instead of point-sampling every other pixel.
-const SCALE_FLAGS: c_int = ffi::SwsFlags::SWS_BILINEAR as c_int;
+/// widens its filter when downscaling instead of point-sampling every other pixel. The C API value
+/// is 2 across the FFmpeg 7/8 ABI; spelling it numerically avoids bindgen's SwsFlags representation
+/// difference between those two header generations.
+const SCALE_FLAGS: c_int = 2;
 
 /// Dedicated pool, sized to leave the game room, mirroring the process pipeline's convert pool.
 fn scale_pool() -> Option<&'static ThreadPool> {
