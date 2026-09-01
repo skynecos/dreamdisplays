@@ -188,7 +188,7 @@ object ScreenRenderer : ClientRenderService {
     private const val SUBTITLE_WIDTH_FRACTION = 0.88f
     private const val SUBTITLE_HEIGHT_FRACTION = 0.42f
     private const val SUBTITLE_BOTTOM_MARGIN = 0.075f
-    private const val SUBTITLE_LIFT = 0.12f
+    private const val SUBTITLE_LIFT = 0.20f
     private const val SUBTITLE_MAX_LINES = 4
 
     /** Draws active WebVTT cues in world space, slightly in front of the video plane. */
