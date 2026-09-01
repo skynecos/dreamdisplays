@@ -26,6 +26,9 @@ import com.mojang.blaze3d.vertex.VertexFormat
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.Font
+//? if >=26.2 {
+import net.minecraft.client.gui.font.TextRenderable
+//?}
 import net.minecraft.world.phys.Vec3
 import kotlin.math.floor
 import kotlin.math.sin
@@ -185,8 +188,29 @@ object ScreenRenderer : ClientRenderService {
         stack.translate(0.5f, SUBTITLE_BOTTOM_MARGIN + totalHeight, 0f)
         stack.scale(textScale, -textScale, 1f)
 
-        val buffers = minecraft.renderBuffers().bufferSource()
+        val buffers =
+            //? if >=26.2 {
+            minecraft.gameRenderer.renderBuffers().bufferSource()
+            //?} else
+            /*minecraft.renderBuffers().bufferSource()*/
         lines.forEachIndexed { index, line ->
+            //? if >=26.2 {
+            val prepared = font.prepareText(
+                line,
+                -font.width(line) / 2f,
+                (index * lineAdvancePixels).toFloat(),
+                -1,
+                true,
+                0x80000000.toInt(),
+            )
+            prepared.visit(object : Font.GlyphVisitor {
+                override fun acceptRenderable(renderable: TextRenderable) {
+                    val buffer = buffers.getBuffer(renderable.renderType(Font.DisplayMode.POLYGON_OFFSET))
+                    renderable.render(stack.last().pose(), buffer, 0xF000F0, false)
+                }
+            })
+            //?} else
+            /*
             font.drawInBatch(
                 line,
                 -font.width(line) / 2f,
@@ -199,8 +223,11 @@ object ScreenRenderer : ClientRenderService {
                 0x80000000.toInt(),
                 0xF000F0,
             )
+            */
         }
+        //? if <26.2 {
         buffers.endBatch()
+        //?}
         stack.popPose()
     }
 
