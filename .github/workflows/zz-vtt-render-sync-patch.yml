@@ -28,80 +28,76 @@ jobs:
               text = p.read_text(encoding="utf-8")
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}: {old!r}")
               p.write_text(text.replace(old, new, 1), encoding="utf-8")
 
+          media = "media/player/src/main/kotlin/com/dreamdisplays/media/player/MediaPlayer.kt"
           replace_once(
-              "media/player/src/main/kotlin/com/dreamdisplays/media/player/MediaPlayer.kt",
-              '''    fun getResumePositionNanos(): Long =
-                  sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
+              media,
+              "        sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()",
+              """        sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
 
-              /** Stream duration in nanos, or 0 for live streams. */''',
-              '''    fun getResumePositionNanos(): Long =
-                  sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
-
-              /**
-               * Content position used by subtitles. Unlike the save/resume position, this follows the same
-               * A/V master clock that paces the frames and sound the viewer is actually seeing/hearing.
-               */
-              fun getSubtitleTimeNanos(): Long {
-                  val paced = sessionManager.currentPacingNanos()
-                  return if (paced >= 0L) paced else getCurrentTime()
-              }
-
-              /** Stream duration in nanos, or 0 for live streams. */'''
+    /**
+     * Content position used by subtitles. Unlike the save/resume position, this follows the same
+     * A/V master clock that paces the frames and sound the viewer is actually seeing/hearing.
+     */
+    fun getSubtitleTimeNanos(): Long {
+        val paced = sessionManager.currentPacingNanos()
+        return if (paced >= 0L) paced else getCurrentTime()
+    }""",
           )
 
+          display = "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt"
           replace_once(
-              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt",
-              '''    /** Subtitle lines active at the exact media-player clock position. */
-              val activeSubtitleLines: List<String> get() = subtitles.activeLines(currentTimeNanos)''',
-              '''    /** Subtitle lines active at the same A/V master-clock position used to present video/audio. */
-              val activeSubtitleLines: List<String>
-                  get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)'''
+              display,
+              "    val activeSubtitleLines: List<String> get() = subtitles.activeLines(currentTimeNanos)",
+              """    val activeSubtitleLines: List<String>
+        get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)""",
+          )
+          replace_once(
+              display,
+              "    /** Subtitle lines active at the exact media-player clock position. */",
+              "    /** Subtitle lines active at the same A/V master-clock position used to present video/audio. */",
           )
 
+          renderer = "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt"
           replace_once(
-              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
-              '''        val lineAdvancePixels = font.lineHeight + 2
-              val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
-              val textScale = desiredLineHeightBlocks / (displayScreen.height * lineAdvancePixels)
-              val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScale).toInt().coerceIn(32, 720)
-              val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScale))
-                  .toInt()
-                  .coerceAtLeast(1)''',
-              '''        val lineAdvancePixels = font.lineHeight + 2
-              val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
-              // The screen transform is intentionally non-uniform (width x height). Text must cancel that
-              // anisotropy or a cinema-wide display stretches every glyph horizontally. Convert one font
-              // pixel to a world-space size first, then back into normalized X/Y screen coordinates.
-              val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels
-              val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1)
-              val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1)
-              val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 4096)
-              val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScaleY))
-                  .toInt()
-                  .coerceAtLeast(1)'''
+              renderer,
+              "        val textScale = desiredLineHeightBlocks / (displayScreen.height * lineAdvancePixels)",
+              """        // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so
+        // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.
+        val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
+        val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()
+        val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()""",
           )
-
           replace_once(
-              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
-              '''        val totalHeight = lines.size * lineAdvancePixels * textScale''',
-              '''        val totalHeight = lines.size * lineAdvancePixels * textScaleY'''
+              renderer,
+              "        val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScale).toInt().coerceIn(32, 720)",
+              "        val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 4096)",
           )
-
           replace_once(
-              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
-              '''        stack.scale(textScale, -textScale, 1f)''',
-              '''        stack.scale(textScaleX, -textScaleY, 1f)'''
+              renderer,
+              "        val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScale))",
+              "        val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScaleY))",
           )
-
           replace_once(
-              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
-              '''    private const val SUBTITLE_LIFT = 0.028f''',
-              '''    private const val SUBTITLE_LIFT = 0.04f'''
+              renderer,
+              "        val totalHeight = lines.size * lineAdvancePixels * textScale",
+              "        val totalHeight = lines.size * lineAdvancePixels * textScaleY",
+          )
+          replace_once(
+              renderer,
+              "        stack.scale(textScale, -textScale, 1f)",
+              "        stack.scale(textScaleX, -textScaleY, 1f)",
+          )
+          replace_once(
+              renderer,
+              "    private const val SUBTITLE_LIFT = 0.028f",
+              "    private const val SUBTITLE_LIFT = 0.04f",
           )
           PY
+
+          git diff --check
 
       - name: Commit patch and remove temporary workflow
         shell: bash
