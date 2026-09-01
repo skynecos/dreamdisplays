@@ -1,0 +1,117 @@
+name: Temporary VTT render/sync patch
+
+on:
+  push:
+    branches: [vtt-local-media-source]
+    paths:
+      - .github/workflows/zz-vtt-render-sync-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch subtitle clock and world-space text scaling
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "media/player/src/main/kotlin/com/dreamdisplays/media/player/MediaPlayer.kt",
+              '''    fun getResumePositionNanos(): Long =
+                  sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
+
+              /** Stream duration in nanos, or 0 for live streams. */''',
+              '''    fun getResumePositionNanos(): Long =
+                  sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
+
+              /**
+               * Content position used by subtitles. Unlike the save/resume position, this follows the same
+               * A/V master clock that paces the frames and sound the viewer is actually seeing/hearing.
+               */
+              fun getSubtitleTimeNanos(): Long {
+                  val paced = sessionManager.currentPacingNanos()
+                  return if (paced >= 0L) paced else getCurrentTime()
+              }
+
+              /** Stream duration in nanos, or 0 for live streams. */'''
+          )
+
+          replace_once(
+              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt",
+              '''    /** Subtitle lines active at the exact media-player clock position. */
+              val activeSubtitleLines: List<String> get() = subtitles.activeLines(currentTimeNanos)''',
+              '''    /** Subtitle lines active at the same A/V master-clock position used to present video/audio. */
+              val activeSubtitleLines: List<String>
+                  get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)'''
+          )
+
+          replace_once(
+              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
+              '''        val lineAdvancePixels = font.lineHeight + 2
+              val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
+              val textScale = desiredLineHeightBlocks / (displayScreen.height * lineAdvancePixels)
+              val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScale).toInt().coerceIn(32, 720)
+              val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScale))
+                  .toInt()
+                  .coerceAtLeast(1)''',
+              '''        val lineAdvancePixels = font.lineHeight + 2
+              val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
+              // The screen transform is intentionally non-uniform (width x height). Text must cancel that
+              // anisotropy or a cinema-wide display stretches every glyph horizontally. Convert one font
+              // pixel to a world-space size first, then back into normalized X/Y screen coordinates.
+              val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels
+              val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1)
+              val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1)
+              val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 4096)
+              val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScaleY))
+                  .toInt()
+                  .coerceAtLeast(1)'''
+          )
+
+          replace_once(
+              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
+              '''        val totalHeight = lines.size * lineAdvancePixels * textScale''',
+              '''        val totalHeight = lines.size * lineAdvancePixels * textScaleY'''
+          )
+
+          replace_once(
+              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
+              '''        stack.scale(textScale, -textScale, 1f)''',
+              '''        stack.scale(textScaleX, -textScaleY, 1f)'''
+          )
+
+          replace_once(
+              "platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt",
+              '''    private const val SUBTITLE_LIFT = 0.028f''',
+              '''    private const val SUBTITLE_LIFT = 0.04f'''
+          )
+          PY
+
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/zz-vtt-render-sync-patch.yml
+          git config user.name "Kirazium CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add media/player/src/main/kotlin/com/dreamdisplays/media/player/MediaPlayer.kt \
+                  platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt \
+                  platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt \
+                  .github/workflows/zz-vtt-render-sync-patch.yml
+          git commit -m "fix: sync subtitles to A/V clock and preserve text aspect"
+          git push origin HEAD:vtt-local-media-source
