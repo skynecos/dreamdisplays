@@ -1,0 +1,30 @@
+name: Temporary stage upstream workflow blobs
+
+on:
+  push:
+    branches: [sync-upstream-1.9.6]
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    if: "${{ github.event.head_commit.message == 'chore: stage official 1.9.6 workflow blobs' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync-upstream-1.9.6
+          fetch-depth: 1
+      - name: Stage official workflow files outside .github/workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Kirazium CI'
+          git config user.email 'actions@users.noreply.github.com'
+          mkdir -p .upstream-1.9.6
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/arnodoelinger/dreamdisplays/v1.9.6/.github/workflows/_build.yml -o .upstream-1.9.6/_build.yml
+          curl -fsSL --retry 3 https://raw.githubusercontent.com/arnodoelinger/dreamdisplays/v1.9.6/.github/workflows/release.yml -o .upstream-1.9.6/release.yml
+          git add .upstream-1.9.6/_build.yml .upstream-1.9.6/release.yml
+          git commit -m 'chore: stage official workflow contents'
+          git push origin HEAD:sync-upstream-1.9.6
