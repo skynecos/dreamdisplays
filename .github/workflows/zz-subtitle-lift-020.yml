@@ -1,0 +1,38 @@
+name: Temporary subtitle lift patch
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: bump subtitle plane forward'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Increase subtitle plane separation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt')
+          s = p.read_text()
+          old = 'private const val SUBTITLE_LIFT = 0.12f'
+          new = 'private const val SUBTITLE_LIFT = 0.20f'
+          if old not in s:
+              raise SystemExit('expected subtitle lift value not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'Kirazium CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt
+          git commit -m 'fix: move subtitle plane farther forward'
+          git push origin HEAD:main
