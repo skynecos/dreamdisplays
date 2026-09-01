@@ -9,14 +9,14 @@ permissions:
 
 jobs:
   sync:
-    if: "${{ github.event.head_commit.message == 'chore: prepare upstream 1.9.6 sync' }}"
+    if: "${{ github.event.head_commit.message == 'chore: apply upstream 1.9.6 delta' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: sync-upstream-1.9.6
           fetch-depth: 0
-      - name: Merge official 1.9.6
+      - name: Apply official 1.9.5 to 1.9.6 delta
         shell: bash
         run: |
           set -euo pipefail
@@ -24,23 +24,20 @@ jobs:
           git config user.email 'actions@users.noreply.github.com'
           git remote add upstream https://github.com/arnodoelinger/dreamdisplays.git
           git fetch upstream --tags --force
-          if git rev-parse --verify 'refs/tags/1.9.6^{commit}' >/dev/null 2>&1; then
-            TARGET=$(git rev-parse 'refs/tags/1.9.6^{commit}')
-          elif git rev-parse --verify 'refs/tags/v1.9.6^{commit}' >/dev/null 2>&1; then
-            TARGET=$(git rev-parse 'refs/tags/v1.9.6^{commit}')
-          else
-            echo 'Could not find official 1.9.6 tag'
-            exit 3
-          fi
-          echo "Official 1.9.6 commit: $TARGET"
-          echo "Merge base: $(git merge-base HEAD "$TARGET" || true)"
-          if ! git merge --no-ff "$TARGET" -m 'merge: official DreamDisplays 1.9.6'; then
-            echo '--- MERGE CONFLICTS ---'
-            git diff --name-only --diff-filter=U
+          BASE=$(git rev-parse 'refs/tags/v1.9.5^{commit}')
+          TARGET=$(git rev-parse 'refs/tags/v1.9.6^{commit}')
+          echo "Official 1.9.5: $BASE"
+          echo "Official 1.9.6: $TARGET"
+          git diff --binary --full-index "$BASE" "$TARGET" > /tmp/upstream-1.9.6.patch
+          echo '--- UPSTREAM DELTA STATS ---'
+          git diff --stat "$BASE" "$TARGET"
+          if ! git apply --3way --index /tmp/upstream-1.9.6.patch; then
+            echo '--- PATCH CONFLICTS ---'
+            git diff --name-only --diff-filter=U || true
             git status --short
             exit 2
           fi
           rm .github/workflows/zz-sync-upstream-196.yml
           git add -A
-          git commit -m 'chore: remove temporary upstream sync workflow'
+          git commit -m 'feat: sync official DreamDisplays 1.9.6 changes'
           git push origin HEAD:sync-upstream-1.9.6
