@@ -1,0 +1,52 @@
+name: Temporary subtitle depth fix
+
+on:
+  push:
+    branches: [vtt-local-media-source]
+    paths:
+      - .github/workflows/zz-subtitle-depth-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Separate subtitle plane from video depth
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt')
+          text = p.read_text(encoding='utf-8')
+
+          old_lift = 'private const val SUBTITLE_LIFT = 0.04f'
+          if text.count(old_lift) != 1:
+              raise SystemExit(f'expected one subtitle lift, found {text.count(old_lift)}')
+          text = text.replace(old_lift, 'private const val SUBTITLE_LIFT = 0.12f', 1)
+
+          old_mode = 'Font.DisplayMode.POLYGON_OFFSET'
+          count = text.count(old_mode)
+          if count != 2:
+              raise SystemExit(f'expected two subtitle display modes, found {count}')
+          text = text.replace(old_mode, 'Font.DisplayMode.NORMAL')
+
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/zz-subtitle-depth-fix.yml
+          git config user.name "Kirazium CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/render/ScreenRenderer.kt \
+                  .github/workflows/zz-subtitle-depth-fix.yml
+          git commit -m "fix: separate subtitle plane from video depth"
+          git push origin HEAD:vtt-local-media-source
