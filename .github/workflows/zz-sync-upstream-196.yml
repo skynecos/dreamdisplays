@@ -1,0 +1,46 @@
+name: Temporary upstream 1.9.6 sync
+
+on:
+  push:
+    branches: [sync-upstream-1.9.6]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: "${{ github.event.head_commit.message == 'chore: prepare upstream 1.9.6 sync' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync-upstream-1.9.6
+          fetch-depth: 0
+      - name: Merge official 1.9.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Kirazium CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git remote add upstream https://github.com/arnodoelinger/dreamdisplays.git
+          git fetch upstream --tags --force
+          if git rev-parse --verify 'refs/tags/1.9.6^{commit}' >/dev/null 2>&1; then
+            TARGET=$(git rev-parse 'refs/tags/1.9.6^{commit}')
+          elif git rev-parse --verify 'refs/tags/v1.9.6^{commit}' >/dev/null 2>&1; then
+            TARGET=$(git rev-parse 'refs/tags/v1.9.6^{commit}')
+          else
+            echo 'Could not find official 1.9.6 tag'
+            exit 3
+          fi
+          echo "Official 1.9.6 commit: $TARGET"
+          echo "Merge base: $(git merge-base HEAD "$TARGET" || true)"
+          if ! git merge --no-ff "$TARGET" -m 'merge: official DreamDisplays 1.9.6'; then
+            echo '--- MERGE CONFLICTS ---'
+            git diff --name-only --diff-filter=U
+            git status --short
+            exit 2
+          fi
+          rm .github/workflows/zz-sync-upstream-196.yml
+          git add -A
+          git commit -m 'chore: remove temporary upstream sync workflow'
+          git push origin HEAD:sync-upstream-1.9.6
