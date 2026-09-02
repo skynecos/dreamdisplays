@@ -19,13 +19,19 @@ import com.dreamdisplays.api.runtime.registry.service.getOrNull
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayRegistry
 import com.dreamdisplays.platform.client.displays.DisplayScreen
+import com.dreamdisplays.platform.client.managers.ClientStateManager
 import com.dreamdisplays.platform.client.render.ScreenRenderer.drawLayer
+import com.dreamdisplays.platform.client.subtitles.SubtitleFontPreset
+import com.dreamdisplays.platform.client.subtitles.SubtitleStyleDefaults
+import com.dreamdisplays.platform.client.subtitles.subtitleBackgroundArgb
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
 import com.mojang.blaze3d.vertex.VertexFormat
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.Font
+import net.minecraft.network.chat.Style
+import net.minecraft.util.FormattedCharSequence
 import net.minecraft.world.phys.Vec3
 import kotlin.math.floor
 import kotlin.math.sin
@@ -34,11 +40,11 @@ import kotlin.math.sin
 fun interface WorldTextSubmitter {
     fun submit(
         stack: PoseStack,
-        text: String,
+        text: FormattedCharSequence,
         x: Float,
         y: Float,
         color: Int,
-        shadow: Boolean,
+        outlineColor: Int,
         mode: Font.DisplayMode,
         backgroundColor: Int,
         packedLight: Int,
@@ -187,9 +193,14 @@ object ScreenRenderer : ClientRenderService {
     /** Subtitles occupy at most this fraction of the video width and lower-screen height. */
     private const val SUBTITLE_WIDTH_FRACTION = 0.88f
     private const val SUBTITLE_HEIGHT_FRACTION = 0.42f
-    private const val SUBTITLE_BOTTOM_MARGIN = 0.075f
     private const val SUBTITLE_LIFT = 0.20f
-    private const val SUBTITLE_MAX_LINES = 4
+
+    private data class SubtitleLayout(
+        val lines: List<String>,
+        val lineAdvancePixels: Int,
+        val textScaleX: Float,
+        val textScaleY: Float,
+    )
 
     /** Draws active WebVTT cues in world space, slightly in front of the video plane. */
     private fun renderSubtitle(
@@ -203,25 +214,28 @@ object ScreenRenderer : ClientRenderService {
 
         val minecraft = Minecraft.getInstance()
         val font = minecraft.font
-        val lineAdvancePixels = font.lineHeight + 2
-        val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
-        // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so
-        // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.
-        val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
-        val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()
-        val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()
-        val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 4096)
-        val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScaleY))
-            .toInt()
-            .coerceAtLeast(1)
-        val lines = wrapSubtitleLines(rawLines, font, wrapPixels)
-            .take(minOf(SUBTITLE_MAX_LINES, maxLinesByHeight))
-        if (lines.isEmpty()) return
+        val config = ClientStateManager.config
+        val preset = SubtitleFontPreset.fromToken(config.subtitleFont)
+        val style = preset.style()
+        val layout = buildSubtitleLayout(
+            displayScreen,
+            rawLines,
+            font,
+            style,
+            config.subtitleSize.coerceIn(SubtitleStyleDefaults.MIN_SIZE, SubtitleStyleDefaults.MAX_SIZE).toFloat(),
+        ) ?: return
         //? if >=26.2 {
         val subtitleSubmitter = submitText ?: return
         //?}
 
-        val totalHeight = lines.size * lineAdvancePixels * textScaleY
+        val textColor = config.subtitleTextColor or 0xFF000000.toInt()
+        val outlineColor = config.subtitleOutlineColor
+        val backgroundColor = subtitleBackgroundArgb(config.subtitleBackgroundColor, config.subtitleBackgroundOpacity)
+        val bottomMargin = config.subtitleBottomMargin
+            .coerceIn(SubtitleStyleDefaults.MIN_BOTTOM_MARGIN, SubtitleStyleDefaults.MAX_BOTTOM_MARGIN)
+            .toFloat()
+        val totalHeight = layout.lines.size * layout.lineAdvancePixels * layout.textScaleY
+
         stack.pushPose()
         DisplayGeometry.liftTowardViewer(stack, displayScreen.facing, SUBTITLE_LIFT)
         DisplayGeometry.applyScreenTransform(
@@ -230,39 +244,46 @@ object ScreenRenderer : ClientRenderService {
             displayScreen.width,
             displayScreen.height,
         )
-        stack.translate(0.5f, SUBTITLE_BOTTOM_MARGIN + totalHeight, 0f)
-        stack.scale(textScaleX, -textScaleY, 1f)
+        stack.translate(0.5f, bottomMargin + totalHeight, 0f)
+        stack.scale(layout.textScaleX, -layout.textScaleY, 1f)
 
         //? if <26.2 {
         val buffers = minecraft.renderBuffers().bufferSource()
         //?}
-        lines.forEachIndexed { index, line ->
+        layout.lines.forEachIndexed { index, line ->
+            val formatted = FormattedCharSequence.forward(line, style)
+            val x = -font.width(formatted) / 2f
+            val y = (index * layout.lineAdvancePixels).toFloat()
             //? if >=26.2 {
             subtitleSubmitter.submit(
                 stack,
-                line,
-                -font.width(line) / 2f,
-                (index * lineAdvancePixels).toFloat(),
-                -1,
-                false,
+                formatted,
+                x,
+                y,
+                textColor,
+                outlineColor,
                 Font.DisplayMode.NORMAL,
-                0,
+                backgroundColor,
                 0xF000F0,
             )
             //?} else
             /*
-            font.drawInBatch(
-                line,
-                -font.width(line) / 2f,
-                (index * lineAdvancePixels).toFloat(),
-                -1,
-                false,
-                stack.last().pose(),
-                buffers,
-                Font.DisplayMode.NORMAL,
-                0,
-                0xF000F0,
-            )
+            if ((outlineColor ushr 24) != 0) {
+                if ((backgroundColor ushr 24) != 0) {
+                    font.drawInBatch(
+                        formatted, x, y, textColor, false, stack.last().pose(), buffers,
+                        Font.DisplayMode.NORMAL, backgroundColor, 0xF000F0,
+                    )
+                }
+                font.drawInBatch8xOutline(
+                    formatted, x, y, textColor, outlineColor, stack.last().pose(), buffers, 0xF000F0,
+                )
+            } else {
+                font.drawInBatch(
+                    formatted, x, y, textColor, false, stack.last().pose(), buffers,
+                    Font.DisplayMode.NORMAL, backgroundColor, 0xF000F0,
+                )
+            }
             */
         }
         //? if <26.2 {
@@ -271,14 +292,50 @@ object ScreenRenderer : ClientRenderService {
         stack.popPose()
     }
 
-    /** Word-wraps cue lines in Minecraft's actual font metrics, including safe splitting of long words. */
-    private fun wrapSubtitleLines(rawLines: List<String>, font: Font, maxWidth: Int): List<String> {
+    /**
+     * Computes subtitle wrapping and scale. If a cue would exceed the allotted lower-screen height,
+     * the glyph scale is reduced and wrapping is recalculated instead of silently cutting lines.
+     */
+    private fun buildSubtitleLayout(
+        displayScreen: DisplayScreen,
+        rawLines: List<String>,
+        font: Font,
+        style: Style,
+        requestedSize: Float,
+    ): SubtitleLayout? {
+        val lineAdvancePixels = font.lineHeight + 2
+        var desiredLineHeightBlocks =
+            (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f) * requestedSize
+        var result: SubtitleLayout? = null
+
+        repeat(10) {
+            val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
+            val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()
+            val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()
+            val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 8192)
+            val lines = wrapSubtitleLines(rawLines, font, style, wrapPixels)
+            if (lines.isEmpty()) return null
+
+            result = SubtitleLayout(lines, lineAdvancePixels, textScaleX, textScaleY)
+            val totalHeight = lines.size * lineAdvancePixels * textScaleY
+            if (totalHeight <= SUBTITLE_HEIGHT_FRACTION) return result
+
+            val fit = (SUBTITLE_HEIGHT_FRACTION / totalHeight).coerceIn(0.25f, 0.92f)
+            desiredLineHeightBlocks *= fit
+        }
+        return result
+    }
+
+    /** Word-wraps cue lines using the selected font's actual metrics, including safe splitting of long words. */
+    private fun wrapSubtitleLines(rawLines: List<String>, font: Font, style: Style, maxWidth: Int): List<String> {
         val output = ArrayList<String>()
+        fun width(text: String): Int = font.width(FormattedCharSequence.forward(text, style))
+
         for (raw in rawLines) {
             var current = ""
             for (word in raw.trim().split(Regex("\\s+")).filter(String::isNotEmpty)) {
                 val candidate = if (current.isEmpty()) word else "$current $word"
-                if (font.width(candidate) <= maxWidth) {
+                if (width(candidate) <= maxWidth) {
                     current = candidate
                     continue
                 }
@@ -286,13 +343,13 @@ object ScreenRenderer : ClientRenderService {
                     output += current
                     current = ""
                 }
-                if (font.width(word) <= maxWidth) {
+                if (width(word) <= maxWidth) {
                     current = word
                 } else {
                     var part = ""
                     for (character in word) {
                         val next = part + character
-                        if (part.isNotEmpty() && font.width(next) > maxWidth) {
+                        if (part.isNotEmpty() && width(next) > maxWidth) {
                             output += part
                             part = character.toString()
                         } else {
