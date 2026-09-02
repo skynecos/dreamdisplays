@@ -11,8 +11,6 @@ import com.dreamdisplays.platform.client.Mod as DreamMod
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
 //? if >=26.2 {
-import net.minecraft.network.chat.Style
-import net.minecraft.util.FormattedCharSequence
 import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent
 //?}
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
@@ -81,13 +79,29 @@ class Client(modEventBus: IEventBus) : DreamMod {
         ScreenRenderer.render(
             event.poseStack,
             camera,
-            submitText = WorldTextSubmitter { stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
+            submitText = WorldTextSubmitter { stack, text, x, y, color, outlineColor, mode, backgroundColor, packedLight ->
+                if ((outlineColor ushr 24) != 0) {
+                    for ((dx, dy) in SUBTITLE_OUTLINE_OFFSETS) {
+                        event.submitNodeCollector.submitText(
+                            stack,
+                            x + dx,
+                            y + dy,
+                            text,
+                            false,
+                            mode,
+                            packedLight,
+                            outlineColor,
+                            0,
+                            0,
+                        )
+                    }
+                }
                 event.submitNodeCollector.submitText(
                     stack,
                     x,
                     y,
-                    FormattedCharSequence.forward(text, Style.EMPTY),
-                    shadow,
+                    text,
+                    false,
                     mode,
                     packedLight,
                     color,
@@ -97,6 +111,12 @@ class Client(modEventBus: IEventBus) : DreamMod {
             },
         )
     }
+
+    private val SUBTITLE_OUTLINE_OFFSETS = arrayOf(
+        -1f to -1f, 0f to -1f, 1f to -1f,
+        -1f to 0f, 1f to 0f,
+        -1f to 1f, 0f to 1f, 1f to 1f,
+    )
     //?} else
     /*
     @SubscribeEvent
