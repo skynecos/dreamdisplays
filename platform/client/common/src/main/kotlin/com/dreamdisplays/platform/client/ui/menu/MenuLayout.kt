@@ -34,11 +34,9 @@ class MenuLayout private constructor(
             if (wide) {
                 val rightColW = max(200, min(280, totalW * 3 / 10))
                 val leftColW = totalW - rightColW - gap
-                // The video is letterboxed to the screen's own aspect ratio, so height (not width)
-                // is almost always its limiting dimension here; give it as much as the settings
-                // panel below can spare instead of a flat 60/40 split, so it isn't left tiny inside
-                // a much wider column.
-                val settingsMinH = 220 // +30 to fit the 3D-audio settings row alongside the existing four
+                // Six settings rows plus the owner action strip need roughly 220px. Keep this floor
+                // so the subtitle-appearance row never collides with the action buttons below it.
+                val settingsMinH = 220
                 var previewSlice = (totalH * 8) / 10
                 if (totalH - previewSlice - gap < settingsMinH) {
                     previewSlice = totalH - settingsMinH - gap
@@ -53,7 +51,9 @@ class MenuLayout private constructor(
 
             val idealSuggestionsH = SuggestionsPanel.STRIP_CHROME_H + SuggestionsPanel.FULL_CARD_VIEWPORT_H
             val minSuggestionsH = SuggestionsPanel.STRIP_CHROME_H + SuggestionsPanel.MIN_CARD_VIEWPORT_H
-            val topRowFloor = 200
+            // The settings column now contains six rows. 220px leaves a small but deliberate gap
+            // between the final playback-mode row and the owner action buttons at minimum GUI size.
+            val topRowFloor = 220
             var suggestionsH = idealSuggestionsH
                 .coerceAtMost(max(minSuggestionsH, totalH - topRowFloor - gap))
                 .coerceAtLeast(minSuggestionsH)
