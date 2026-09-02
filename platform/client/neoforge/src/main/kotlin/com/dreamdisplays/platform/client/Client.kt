@@ -80,6 +80,20 @@ class Client(modEventBus: IEventBus) : DreamMod {
             event.poseStack,
             camera,
             submitText = WorldTextSubmitter { stack, text, x, y, color, outlineColor, mode, backgroundColor, packedLight ->
+                if ((backgroundColor ushr 24) != 0) {
+                    event.submitNodeCollector.submitText(
+                        stack,
+                        x,
+                        y,
+                        text,
+                        false,
+                        mode,
+                        packedLight,
+                        color,
+                        backgroundColor,
+                        0,
+                    )
+                }
                 if ((outlineColor ushr 24) != 0) {
                     for ((dx, dy) in SUBTITLE_OUTLINE_OFFSETS) {
                         event.submitNodeCollector.submitText(
@@ -105,7 +119,7 @@ class Client(modEventBus: IEventBus) : DreamMod {
                     mode,
                     packedLight,
                     color,
-                    backgroundColor,
+                    0,
                     0,
                 )
             },
