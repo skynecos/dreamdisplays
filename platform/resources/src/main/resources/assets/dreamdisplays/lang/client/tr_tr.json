@@ -1,0 +1,21 @@
+{
+  "dreamdisplays.subtitle.settings.title": "Altyazı Ayarları",
+  "dreamdisplays.subtitle.settings.short": "Altyazılar",
+  "dreamdisplays.subtitle.settings.tooltip.1": "Altyazı görünümü",
+  "dreamdisplays.subtitle.settings.tooltip.2": "Videoyu yeniden başlatmadan altyazıları kendine göre ayarla",
+  "dreamdisplays.subtitle.configure": "Ayarla",
+  "dreamdisplays.subtitle.size": "Yazı Boyutu",
+  "dreamdisplays.subtitle.font": "Yazı Tipi",
+  "dreamdisplays.subtitle.font.minecraft": "Minecraft",
+  "dreamdisplays.subtitle.font.uniform": "Minecraft Uniform",
+  "dreamdisplays.subtitle.text_color": "Yazı Rengi",
+  "dreamdisplays.subtitle.outline_color": "Yazı Kontur Rengi",
+  "dreamdisplays.subtitle.background_color": "Arkaplan Rengi",
+  "dreamdisplays.subtitle.background_opacity": "Arkaplan Opaklığı",
+  "dreamdisplays.subtitle.bottom_margin": "Kenar Boşluğu",
+  "dreamdisplays.subtitle.live_preview": "CANLI ÖNİZLEME",
+  "dreamdisplays.subtitle.preview": "Bu bir altyazı önizlemesidir.",
+  "dreamdisplays.subtitle.reset": "Sıfırla",
+  "dreamdisplays.subtitle.color.off": "Kapat",
+  "dreamdisplays.subtitle.color.disabled": "Kapalı"
+}
