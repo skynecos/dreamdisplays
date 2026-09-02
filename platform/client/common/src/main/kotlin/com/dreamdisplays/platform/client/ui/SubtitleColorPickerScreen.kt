@@ -91,6 +91,8 @@ internal class SubtitleColorPickerScreen(
         drawChildren(g, mouseX, mouseY, partialTick)
     }
 
+    override fun isPauseScreen(): Boolean = false
+
     override fun onClose() {
         ClientStateManager.config.save()
         Minecraft.getInstance().setScreen(parent)
