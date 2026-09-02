@@ -1,6 +1,5 @@
 package com.dreamdisplays.platform.client.subtitles
 
-import com.dreamdisplays.platform.client.Initializer
 import net.minecraft.network.chat.Style
 //? if >=1.21.11 {
 import net.minecraft.network.chat.FontDescription
@@ -24,20 +23,18 @@ internal object SubtitleStyleDefaults {
     const val MAX_BOTTOM_MARGIN = 0.30
 }
 
-/** Fonts exposed by the subtitle appearance screen. */
+/** Fonts exposed by the subtitle appearance screen. Uses only fonts guaranteed to exist in Minecraft itself. */
 internal enum class SubtitleFontPreset(
     val token: String,
     val labelKey: String,
-    private val namespace: String,
     private val path: String,
 ) {
-    DEFAULT("default", "dreamdisplays.subtitle.font.minecraft", "minecraft", "default"),
-    UNIFORM("uniform", "dreamdisplays.subtitle.font.uniform", "minecraft", "uniform"),
-    MONTSERRAT("montserrat", "dreamdisplays.subtitle.font.montserrat", Initializer.MOD_ID, "montserrat"),
+    DEFAULT("default", "dreamdisplays.subtitle.font.minecraft", "default"),
+    UNIFORM("uniform", "dreamdisplays.subtitle.font.uniform", "uniform"),
     ;
 
     val id: Identifier
-        get() = Identifier.fromNamespaceAndPath(namespace, path)
+        get() = Identifier.withDefaultNamespace(path)
 
     /** Style carrying this preset's font through Minecraft's normal glyph pipeline. */
     fun style(): Style {
