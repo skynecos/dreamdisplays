@@ -8,6 +8,7 @@ package com.dreamdisplays.platform.client.render
 /*import com.mojang.blaze3d.vertex.Tesselator*/
 //? if >=1.21.11 {
 import net.minecraft.client.renderer.rendertype.RenderType
+import net.minecraft.client.renderer.rendertype.RenderTypes
 //?} else
 /*import net.minecraft.client.renderer.RenderType*/
 import com.dreamdisplays.api.display.model.property.DisplayRotation
@@ -174,7 +175,7 @@ object ScreenRenderer : ClientRenderService {
                 lift,
             )
         }
-        if (!replay) renderSubtitle(displayScreen, stack, submitText)
+        if (!replay) renderSubtitle(displayScreen, stack, submitText, drawQuad)
     }
 
     /** Draws a unit quad using the screen's GPU texture, ramping up the first-appear fade. */
@@ -194,6 +195,9 @@ object ScreenRenderer : ClientRenderService {
     private const val SUBTITLE_WIDTH_FRACTION = 0.88f
     private const val SUBTITLE_HEIGHT_FRACTION = 0.42f
     private const val SUBTITLE_LIFT = 0.20f
+    private const val SUBTITLE_BACKGROUND_LIFT = 0.19f
+    private const val SUBTITLE_BACKGROUND_PADDING_X = 4f
+    private const val SUBTITLE_BACKGROUND_PADDING_Y = 2f
 
     private data class SubtitleLayout(
         val lines: List<String>,
@@ -207,6 +211,7 @@ object ScreenRenderer : ClientRenderService {
         displayScreen: DisplayScreen,
         stack: PoseStack,
         submitText: WorldTextSubmitter?,
+        drawQuad: QuadRenderer,
     ) {
         if (!displayScreen.isVideoStarted) return
         val rawLines = displayScreen.activeSubtitleLines
@@ -236,6 +241,39 @@ object ScreenRenderer : ClientRenderService {
             .toFloat()
         val totalHeight = layout.lines.size * layout.lineAdvancePixels * layout.textScaleY
 
+        // Background is its own padded world-space panel. It sits slightly behind the glyph layer
+        // instead of sharing Font.drawInBatch's plane, preventing the panel from visually cutting
+        // into the outline/glyphs while keeping opacity independent from the text.
+        if ((backgroundColor ushr 24) != 0) {
+            val maxWidthPixels = layout.lines.maxOf { line ->
+                font.width(FormattedCharSequence.forward(line, style))
+            }.toFloat()
+            val blockHeightPixels =
+                ((layout.lines.size - 1) * layout.lineAdvancePixels + font.lineHeight).toFloat()
+
+            stack.pushPose()
+            DisplayGeometry.liftTowardViewer(stack, displayScreen.facing, SUBTITLE_BACKGROUND_LIFT)
+            DisplayGeometry.applyScreenTransform(
+                stack,
+                displayScreen.facing,
+                displayScreen.width,
+                displayScreen.height,
+            )
+            stack.translate(0.5f, bottomMargin + totalHeight, 0f)
+            stack.scale(layout.textScaleX, -layout.textScaleY, 1f)
+
+            val x0 = -maxWidthPixels / 2f - SUBTITLE_BACKGROUND_PADDING_X
+            val x1 = maxWidthPixels / 2f + SUBTITLE_BACKGROUND_PADDING_X
+            val y0 = -SUBTITLE_BACKGROUND_PADDING_Y
+            val y1 = blockHeightPixels + SUBTITLE_BACKGROUND_PADDING_Y
+            drawQuad(subtitleBackgroundRenderType()) { pose, builder ->
+                appendTextBackgroundRect(pose, builder, x0, y0, x1, y1, backgroundColor, 0xF000F0)
+            }
+            stack.popPose()
+        }
+
+        // Glyphs get their own layer in front of the panel. The built-in font background is always
+        // disabled here; otherwise Minecraft would create a second rectangle on the exact text plane.
         stack.pushPose()
         DisplayGeometry.liftTowardViewer(stack, displayScreen.facing, SUBTITLE_LIFT)
         DisplayGeometry.applyScreenTransform(
@@ -263,25 +301,19 @@ object ScreenRenderer : ClientRenderService {
                 textColor,
                 outlineColor,
                 Font.DisplayMode.NORMAL,
-                backgroundColor,
+                0,
                 0xF000F0,
             )
             //?} else
             /*
             if ((outlineColor ushr 24) != 0) {
-                if ((backgroundColor ushr 24) != 0) {
-                    font.drawInBatch(
-                        formatted, x, y, textColor, false, stack.last().pose(), buffers,
-                        Font.DisplayMode.NORMAL, backgroundColor, 0xF000F0,
-                    )
-                }
                 font.drawInBatch8xOutline(
                     formatted, x, y, textColor, outlineColor, stack.last().pose(), buffers, 0xF000F0,
                 )
             } else {
                 font.drawInBatch(
                     formatted, x, y, textColor, false, stack.last().pose(), buffers,
-                    Font.DisplayMode.NORMAL, backgroundColor, 0xF000F0,
+                    Font.DisplayMode.NORMAL, 0, 0xF000F0,
                 )
             }
             */
@@ -290,6 +322,41 @@ object ScreenRenderer : ClientRenderService {
         buffers.endBatch()
         //?}
         stack.popPose()
+    }
+
+    /** Returns Minecraft's alpha-capable text-background render type for the current mappings generation. */
+    private fun subtitleBackgroundRenderType(): RenderType =
+        //? if >=1.21.11 {
+        RenderTypes.textBackground()
+        //?} else
+        /*RenderType.textBackground()*/
+
+    /** Appends one alpha-blended text-background quad using the format expected by textBackground(). */
+    private fun appendTextBackgroundRect(
+        pose: PoseStack.Pose,
+        builder: VertexConsumer,
+        x0: Float,
+        y0: Float,
+        x1: Float,
+        y1: Float,
+        color: Int,
+        packedLight: Int,
+    ) {
+        val a = (color ushr 24) and 0xFF
+        val r = (color ushr 16) and 0xFF
+        val g = (color ushr 8) and 0xFF
+        val b = color and 0xFF
+
+        fun vertex(x: Float, y: Float) {
+            builder.addVertex(pose, x, y, 0f)
+                .setColor(r, g, b, a)
+                .setLight(packedLight)
+        }
+
+        vertex(x0, y0)
+        vertex(x1, y0)
+        vertex(x1, y1)
+        vertex(x0, y1)
     }
 
     /**
