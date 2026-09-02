@@ -353,10 +353,11 @@ object ScreenRenderer : ClientRenderService {
                 .setLight(packedLight)
         }
 
+        // The subtitle transform flips Y, so wind the quad in the opposite order here.
         vertex(x0, y0)
-        vertex(x1, y0)
-        vertex(x1, y1)
         vertex(x0, y1)
+        vertex(x1, y1)
+        vertex(x1, y0)
     }
 
     /**
