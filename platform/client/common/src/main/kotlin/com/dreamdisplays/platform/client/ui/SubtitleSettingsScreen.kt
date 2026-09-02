@@ -252,6 +252,8 @@ internal class SubtitleSettingsScreen(private val parent: Screen) :
         g.drawText(font, caption, area.x + 6, area.y + 6, UiTheme.TEXT_META, false)
     }
 
+    override fun isPauseScreen(): Boolean = false
+
     override fun onClose() {
         ClientStateManager.config.save()
         Minecraft.getInstance().setScreen(parent)
