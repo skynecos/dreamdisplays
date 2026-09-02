@@ -265,10 +265,24 @@ class Client : ClientModInitializer, Mod {
     }
 
     //? if >=26.2 {
-    /** Submits subtitle glyphs to the same deferred level collector as the display geometry. */
+    /** Submits subtitle background first, then outline, then the final glyphs to preserve layering. */
     private fun worldTextSubmitter(submitNodeCollector: Any) = WorldTextSubmitter {
             stack, text, x, y, color, outlineColor, mode, backgroundColor, packedLight ->
         val collector = submitNodeCollector as SubmitNodeCollector
+        if ((backgroundColor ushr 24) != 0) {
+            collector.submitText(
+                stack,
+                x,
+                y,
+                text,
+                false,
+                mode,
+                packedLight,
+                color,
+                backgroundColor,
+                0,
+            )
+        }
         if ((outlineColor ushr 24) != 0) {
             for ((dx, dy) in SUBTITLE_OUTLINE_OFFSETS) {
                 collector.submitText(
@@ -294,7 +308,7 @@ class Client : ClientModInitializer, Mod {
             mode,
             packedLight,
             color,
-            backgroundColor,
+            0,
             0,
         )
     }
