@@ -38,7 +38,6 @@ object CatalogMediaActions {
         if (!DisplayManager.isPlayerInRange(player, display)) return
         if (!throttle.tryAcquire(displayId, COOLDOWN_MS)) return
 
-        val videoChanged = display.url != episode.videoUrl
         val wasSync = display.isSync
         display.url = episode.videoUrl
         display.lang = MediaUrlPolicy.sanitizeLang(lang)
@@ -47,6 +46,6 @@ object CatalogMediaActions {
         runAsync { PaperServer.getInstance().storage.saveDisplay(display) }
         DisplayManager.broadcastUpdate(display)
         if (wasSync) StateManager.resetAndBroadcast(display)
-        if (videoChanged) TimelineManager.onVideoChanged(display)
+        TimelineManager.onVideoChanged(display)
     }
 }
