@@ -3,29 +3,7 @@
 package com.dreamdisplays.core.protocol.common
 
 import com.dreamdisplays.api.protocol.model.PacketDirection
-import com.dreamdisplays.core.protocol.common.packets.ClearCache
-import com.dreamdisplays.core.protocol.common.packets.DreamPacket
-import com.dreamdisplays.core.protocol.common.packets.ClientHello
-import com.dreamdisplays.core.protocol.common.packets.DisplayDelete
-import com.dreamdisplays.core.protocol.common.packets.DisplayInfo
-import com.dreamdisplays.core.protocol.common.packets.DisplaySync
-import com.dreamdisplays.core.protocol.common.packets.FullscreenAck
-import com.dreamdisplays.core.protocol.common.packets.FullscreenState
-import com.dreamdisplays.core.protocol.common.packets.PipPin
-import com.dreamdisplays.core.protocol.common.packets.PlaybackCommand
-import com.dreamdisplays.core.protocol.common.packets.RadiusPreview
-import com.dreamdisplays.core.protocol.common.packets.RemotePlaybackToggle
-import com.dreamdisplays.core.protocol.common.packets.ReportDisplay
-import com.dreamdisplays.core.protocol.common.packets.ReportDuration
-import com.dreamdisplays.core.protocol.common.packets.RequestSync
-import com.dreamdisplays.core.protocol.common.packets.ServerHello
-import com.dreamdisplays.core.protocol.common.packets.SetDisplaysEnabled
-import com.dreamdisplays.core.protocol.common.packets.SetLocked
-import com.dreamdisplays.core.protocol.common.packets.SetMode
-import com.dreamdisplays.core.protocol.common.packets.SetVideo
-import com.dreamdisplays.core.protocol.common.packets.WatchPartyControl
-import com.dreamdisplays.core.protocol.common.packets.WatchPartyStart
-import com.dreamdisplays.core.protocol.common.packets.WatchPartyState
+import com.dreamdisplays.core.protocol.common.packets.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -59,7 +37,6 @@ object PacketRegistry {
         val id: Int get() = packetType.id
         val direction: PacketDirection get() = packetType.direction
 
-        /** Encodes [packet], which [entryOf] guarantees is an instance of [type]. */
         fun encode(proto: ProtoBuf, packet: DreamPacket): ByteArray = proto.encodeToByteArray(serializer, type.cast(packet))
     }
 
@@ -86,6 +63,11 @@ object PacketRegistry {
         Entry(PacketType.PIP_PIN, PipPin::class, PipPin.serializer()),
         Entry(PacketType.REPORT_DURATION, ReportDuration::class, ReportDuration.serializer()),
         Entry(PacketType.REMOTE_PLAYBACK_TOGGLE, RemotePlaybackToggle::class, RemotePlaybackToggle.serializer()),
+        Entry(
+            PacketType.SET_MEDIA_WITH_SUBTITLE,
+            SetMediaWithSubtitle::class,
+            SetMediaWithSubtitle.serializer(),
+        ),
     )
 
     private val byId = entries.associateBy { it.id }
@@ -105,21 +87,18 @@ object PacketRegistry {
         }
     }
 
-    /** Encodes [packet] into envelope bytes ready for the `dreamdisplays:v2` channel. */
     fun encode(packet: DreamPacket): ByteArray {
         val entry = entryOf(packet)
         val payload = entry.encode(proto, packet)
         return proto.encodeToByteArray(Envelope.serializer(), Envelope(entry.id, payload))
     }
 
-    /** Decodes envelope bytes; returns null for unknown type ids (newer peer, skip silently). */
     fun decode(bytes: ByteArray): DreamPacket? {
         val envelope = proto.decodeFromByteArray(Envelope.serializer(), bytes)
         val entry = byId[envelope.type] ?: return null
         return proto.decodeFromByteArray(entry.serializer, envelope.payload)
     }
 
-    /** Decodes envelope bytes, validating packet direction matches [inbound]; rejects packets from invalid directions. */
     fun decode(bytes: ByteArray, inbound: PacketDirection): DreamPacket? {
         val packet = decode(bytes) ?: return null
         val direction = directionOf(packet)
@@ -129,10 +108,8 @@ object PacketRegistry {
         return packet
     }
 
-    /** The registered travel direction of [packet]'s type. */
     fun directionOf(packet: DreamPacket): PacketDirection = entryOf(packet).direction
 
-    /** Descriptors of every registered packet, in id order; feeds the .proto schema generator. */
     val schemaDescriptors: List<SerialDescriptor>
         get() = entries.map { it.serializer.descriptor }
 

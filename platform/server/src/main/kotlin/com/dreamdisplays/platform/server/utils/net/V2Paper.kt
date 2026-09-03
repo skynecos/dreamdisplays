@@ -31,7 +31,7 @@ const val V2_CHANNEL: String = "dreamdisplays:v2"
 @PaperOnly
 @NullMarked
 object PaperV2Networking : PluginMessageListener {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/PaperV2Networking")
+    private val logger = LoggerFactory.getLogger(javaClass)
     private val plugin: PaperServer by lazy { PaperServer.getInstance() }
 
     /** Encodes [packet] once and sends it to every non-null player in [players]. */
@@ -75,6 +75,13 @@ object PaperV2Networking : PluginMessageListener {
             is DisplayDelete -> DisplayActions.delete(player, packet.id)
             is ReportDisplay -> DisplayManager.report(packet.id, player)
             is SetVideo -> DisplayActions.setVideo(player, packet.id, packet.url, packet.lang)
+            is SetMediaWithSubtitle -> CatalogActions.setMediaWithSubtitle(
+                player,
+                packet.id,
+                packet.url,
+                packet.lang,
+                packet.subtitleUrl,
+            )
             is SetLocked -> DisplayActions.setLocked(player, packet.id, packet.locked)
             is SetMode -> DisplayActions.setMode(
                 player,

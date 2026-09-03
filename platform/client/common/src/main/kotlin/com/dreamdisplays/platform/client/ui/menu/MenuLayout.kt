@@ -8,7 +8,7 @@ import kotlin.math.min
 
 /**
  * Responsive panel layout for the display menu. Three modes depending on screen size: side-by-side, stacked suggestions
- * below, or suggestions hidden.
+ * below, or suggestions hidden. The first strip is reserved for the Kirazium series carousel.
  */
 class MenuLayout private constructor(
     val preview: UiRect,
@@ -17,12 +17,15 @@ class MenuLayout private constructor(
     val suggestionsVertical: Boolean,
 ) {
     companion object {
+        private const val SERIES_BAR_BOTTOM = 80
+
         /** Computes the panel layout for a [screenW] x [screenH] screen with the given font [lineHeight]. */
         fun compute(screenW: Int, screenH: Int, lineHeight: Int): MenuLayout {
             val pad = UiTheme.SCREEN_PADDING
             val gap = UiTheme.PANEL_GAP
             val titleY = 6
-            val contentTop = titleY + lineHeight + 8
+            val legacyTop = titleY + lineHeight + 8
+            val contentTop = max(legacyTop, SERIES_BAR_BOTTOM + gap)
             val contentBottom = screenH - pad
             val totalW = screenW - pad * 2
             val totalH = contentBottom - contentTop
@@ -34,11 +37,7 @@ class MenuLayout private constructor(
             if (wide) {
                 val rightColW = max(200, min(280, totalW * 3 / 10))
                 val leftColW = totalW - rightColW - gap
-                // The video is letterboxed to the screen's own aspect ratio, so height (not width)
-                // is almost always its limiting dimension here; give it as much as the settings
-                // panel below can spare instead of a flat 60/40 split, so it isn't left tiny inside
-                // a much wider column.
-                val settingsMinH = 220 // +30 to fit the 3D-audio settings row alongside the existing four
+                val settingsMinH = 220
                 var previewSlice = (totalH * 8) / 10
                 if (totalH - previewSlice - gap < settingsMinH) {
                     previewSlice = totalH - settingsMinH - gap
@@ -51,15 +50,9 @@ class MenuLayout private constructor(
                 )
             }
 
-            // The horizontal suggestions strip is a fixed-height band, not a fraction of the screen:
-            // it must fit its own header + search row (STRIP_CHROME_H) plus a full result card
-            // (16:9 thumbnail + two title lines + meta = FULL_CARD_VIEWPORT_H). Reserve that comfortable
-            // height so cards are never clipped, then hand everything else to the preview/settings row
-            // (which the user wants as large as possible). On short screens it shrinks toward a floor
-            // that still shows an un-clipped, if smaller, card; below that it's dropped entirely.
             val idealSuggestionsH = SuggestionsPanel.STRIP_CHROME_H + SuggestionsPanel.FULL_CARD_VIEWPORT_H
             val minSuggestionsH = SuggestionsPanel.STRIP_CHROME_H + SuggestionsPanel.MIN_CARD_VIEWPORT_H
-            val topRowFloor = 230 // +30 to fit the 3D-audio settings row alongside the existing four
+            val topRowFloor = 220
             var suggestionsH = idealSuggestionsH
                 .coerceAtMost(max(minSuggestionsH, totalH - topRowFloor - gap))
                 .coerceAtLeast(minSuggestionsH)

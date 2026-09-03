@@ -19,6 +19,7 @@ import com.dreamdisplays.core.protocol.common.packets.RequestSync
 import com.dreamdisplays.core.protocol.common.packets.ServerHello
 import com.dreamdisplays.core.protocol.common.packets.SetDisplaysEnabled
 import com.dreamdisplays.core.protocol.common.packets.SetLocked
+import com.dreamdisplays.core.protocol.common.packets.SetMediaWithSubtitle
 import com.dreamdisplays.core.protocol.common.packets.SetMode
 import com.dreamdisplays.core.protocol.common.packets.SetVideo
 import com.dreamdisplays.core.protocol.common.packets.WatchPartyControl
@@ -55,7 +56,8 @@ enum class PacketType(
     RADIUS_PREVIEW(19, RadiusPreview::class, PacketDirection.SERVER_TO_CLIENT),
     PIP_PIN(20, PipPin::class, PacketDirection.CLIENT_TO_SERVER),
     REPORT_DURATION(21, ReportDuration::class, PacketDirection.CLIENT_TO_SERVER),
-    REMOTE_PLAYBACK_TOGGLE(22, RemotePlaybackToggle::class, PacketDirection.SERVER_TO_CLIENT);
+    REMOTE_PLAYBACK_TOGGLE(22, RemotePlaybackToggle::class, PacketDirection.SERVER_TO_CLIENT),
+    SET_MEDIA_WITH_SUBTITLE(23, SetMediaWithSubtitle::class, PacketDirection.CLIENT_TO_SERVER);
 
     companion object {
         private val byId = entries.associateBy { it.id }
