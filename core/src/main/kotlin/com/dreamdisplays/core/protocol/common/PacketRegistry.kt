@@ -3,29 +3,7 @@
 package com.dreamdisplays.core.protocol.common
 
 import com.dreamdisplays.api.protocol.model.PacketDirection
-import com.dreamdisplays.core.protocol.common.packets.ClearCache
-import com.dreamdisplays.core.protocol.common.packets.DreamPacket
-import com.dreamdisplays.core.protocol.common.packets.ClientHello
-import com.dreamdisplays.core.protocol.common.packets.DisplayDelete
-import com.dreamdisplays.core.protocol.common.packets.DisplayInfo
-import com.dreamdisplays.core.protocol.common.packets.DisplaySync
-import com.dreamdisplays.core.protocol.common.packets.FullscreenAck
-import com.dreamdisplays.core.protocol.common.packets.FullscreenState
-import com.dreamdisplays.core.protocol.common.packets.PipPin
-import com.dreamdisplays.core.protocol.common.packets.PlaybackCommand
-import com.dreamdisplays.core.protocol.common.packets.RadiusPreview
-import com.dreamdisplays.core.protocol.common.packets.RemotePlaybackToggle
-import com.dreamdisplays.core.protocol.common.packets.ReportDisplay
-import com.dreamdisplays.core.protocol.common.packets.ReportDuration
-import com.dreamdisplays.core.protocol.common.packets.RequestSync
-import com.dreamdisplays.core.protocol.common.packets.ServerHello
-import com.dreamdisplays.core.protocol.common.packets.SetDisplaysEnabled
-import com.dreamdisplays.core.protocol.common.packets.SetLocked
-import com.dreamdisplays.core.protocol.common.packets.SetMode
-import com.dreamdisplays.core.protocol.common.packets.SetVideo
-import com.dreamdisplays.core.protocol.common.packets.WatchPartyControl
-import com.dreamdisplays.core.protocol.common.packets.WatchPartyStart
-import com.dreamdisplays.core.protocol.common.packets.WatchPartyState
+import com.dreamdisplays.core.protocol.common.packets.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -85,6 +63,11 @@ object PacketRegistry {
         Entry(PacketType.PIP_PIN, PipPin::class, PipPin.serializer()),
         Entry(PacketType.REPORT_DURATION, ReportDuration::class, ReportDuration.serializer()),
         Entry(PacketType.REMOTE_PLAYBACK_TOGGLE, RemotePlaybackToggle::class, RemotePlaybackToggle.serializer()),
+        Entry(
+            PacketType.SET_MEDIA_WITH_SUBTITLE,
+            SetMediaWithSubtitle::class,
+            SetMediaWithSubtitle.serializer(),
+        ),
     )
 
     private val byId = entries.associateBy { it.id }

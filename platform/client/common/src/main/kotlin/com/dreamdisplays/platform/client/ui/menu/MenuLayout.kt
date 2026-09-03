@@ -8,7 +8,7 @@ import kotlin.math.min
 
 /**
  * Responsive panel layout for the display menu. Three modes depending on screen size: side-by-side, stacked suggestions
- * below, or suggestions hidden.
+ * below, or suggestions hidden. The first strip is reserved for the Kirazium series carousel.
  */
 class MenuLayout private constructor(
     val preview: UiRect,
@@ -17,12 +17,15 @@ class MenuLayout private constructor(
     val suggestionsVertical: Boolean,
 ) {
     companion object {
+        private const val SERIES_BAR_BOTTOM = 80
+
         /** Computes the panel layout for a [screenW] x [screenH] screen with the given font [lineHeight]. */
         fun compute(screenW: Int, screenH: Int, lineHeight: Int): MenuLayout {
             val pad = UiTheme.SCREEN_PADDING
             val gap = UiTheme.PANEL_GAP
             val titleY = 6
-            val contentTop = titleY + lineHeight + 8
+            val legacyTop = titleY + lineHeight + 8
+            val contentTop = max(legacyTop, SERIES_BAR_BOTTOM + gap)
             val contentBottom = screenH - pad
             val totalW = screenW - pad * 2
             val totalH = contentBottom - contentTop
@@ -34,8 +37,6 @@ class MenuLayout private constructor(
             if (wide) {
                 val rightColW = max(200, min(280, totalW * 3 / 10))
                 val leftColW = totalW - rightColW - gap
-                // Six settings rows plus the owner action strip need roughly 220px. Keep this floor
-                // so the subtitle-appearance row never collides with the action buttons below it.
                 val settingsMinH = 220
                 var previewSlice = (totalH * 8) / 10
                 if (totalH - previewSlice - gap < settingsMinH) {
@@ -51,8 +52,6 @@ class MenuLayout private constructor(
 
             val idealSuggestionsH = SuggestionsPanel.STRIP_CHROME_H + SuggestionsPanel.FULL_CARD_VIEWPORT_H
             val minSuggestionsH = SuggestionsPanel.STRIP_CHROME_H + SuggestionsPanel.MIN_CARD_VIEWPORT_H
-            // The settings column now contains six rows. 220px leaves a small but deliberate gap
-            // between the final playback-mode row and the owner action buttons at minimum GUI size.
             val topRowFloor = 220
             var suggestionsH = idealSuggestionsH
                 .coerceAtMost(max(minSuggestionsH, totalH - topRowFloor - gap))
