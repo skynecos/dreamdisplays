@@ -74,7 +74,11 @@ object PaperV2Networking : PluginMessageListener {
             is ReportDuration -> DisplayActions.reportDuration(player, packet.id, packet.durationMs)
             is DisplayDelete -> DisplayActions.delete(player, packet.id)
             is ReportDisplay -> DisplayManager.report(packet.id, player)
-            is SetVideo -> DisplayActions.setVideo(player, packet.id, packet.url, packet.lang)
+            is SetVideo -> if (packet.replaceSubtitle) {
+                CatalogMediaActions.setMedia(player, packet.id, packet.url, packet.lang, packet.subtitleUrl)
+            } else {
+                DisplayActions.setVideo(player, packet.id, packet.url, packet.lang)
+            }
             is SetLocked -> DisplayActions.setLocked(player, packet.id, packet.locked)
             is SetMode -> DisplayActions.setMode(
                 player,
