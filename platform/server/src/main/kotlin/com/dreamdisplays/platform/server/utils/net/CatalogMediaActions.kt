@@ -1,8 +1,8 @@
 package com.dreamdisplays.platform.server.utils.net
 
-import com.dreamdisplays.api.media.source.url.CustomMediaUrls
 import com.dreamdisplays.api.playback.policy.PlaybackPermissions
 import com.dreamdisplays.api.security.policy.MediaUrlPolicy
+import com.dreamdisplays.core.catalog.KiraziumCatalog
 import com.dreamdisplays.platform.server.PaperServer
 import com.dreamdisplays.platform.server.datatypes.display.PaperDisplayData
 import com.dreamdisplays.platform.server.managers.ActionThrottle
@@ -11,7 +11,6 @@ import com.dreamdisplays.platform.server.managers.StateManager
 import com.dreamdisplays.platform.server.meta.Scheduler.runAsync
 import com.dreamdisplays.platform.server.playback.PlaybackContexts
 import com.dreamdisplays.platform.server.playback.TimelineManager
-import com.dreamdisplays.platform.server.utils.MessageUtil
 import io.github.arnodoelinger.platformweaver.PaperOnly
 import org.bukkit.entity.Player
 import java.util.UUID
@@ -31,35 +30,19 @@ object CatalogMediaActions {
         )
         if (!PlaybackPermissions.canSetVideo(context)) return
 
-        if (!MediaUrlPolicy.isAllowed(rawVideoUrl)) return
-        CustomMediaGate.refusalKey(
-            rawVideoUrl,
-            PaperServer.config.settings.customMediaPolicy,
-            player.hasPermission(PaperServer.config.permissions.custom),
-            player.uniqueId,
-        )?.let { return MessageUtil.sendMessage(player, it) }
-
-        val subtitleUrl = if (rawSubtitleUrl.isBlank()) {
-            ""
-        } else {
-            val normalized = CustomMediaUrls.normalize(rawSubtitleUrl)?.takeIf(MediaUrlPolicy::isAllowed) ?: return
-            CustomMediaGate.refusalKey(
-                normalized,
-                PaperServer.config.settings.customMediaPolicy,
-                player.hasPermission(PaperServer.config.permissions.custom),
-                player.uniqueId,
-            )?.let { return MessageUtil.sendMessage(player, it) }
-            normalized
-        }
+        // Catalog packets are not a custom-media escape hatch: the exact video + subtitle pair must
+        // already exist in the shared server-side allowlist. Never trust a modified client's raw URLs.
+        val episode = KiraziumCatalog.findByMedia(rawVideoUrl, rawSubtitleUrl) ?: return
+        if (!MediaUrlPolicy.isAllowed(episode.videoUrl) || !MediaUrlPolicy.isAllowed(episode.subtitleUrl)) return
 
         if (!DisplayManager.isPlayerInRange(player, display)) return
         if (!throttle.tryAcquire(displayId, COOLDOWN_MS)) return
 
-        val videoChanged = display.url != rawVideoUrl
+        val videoChanged = display.url != episode.videoUrl
         val wasSync = display.isSync
-        display.url = rawVideoUrl
+        display.url = episode.videoUrl
         display.lang = MediaUrlPolicy.sanitizeLang(lang)
-        display.subtitleUrl = subtitleUrl
+        display.subtitleUrl = episode.subtitleUrl
 
         runAsync { PaperServer.getInstance().storage.saveDisplay(display) }
         DisplayManager.broadcastUpdate(display)
