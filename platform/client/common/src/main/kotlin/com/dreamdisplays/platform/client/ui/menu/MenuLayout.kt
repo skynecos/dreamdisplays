@@ -7,26 +7,31 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Responsive panel layout for the display menu. Three modes depending on screen size: side-by-side, stacked suggestions
- * below, or suggestions hidden.
+ * Responsive panel layout for the display menu. The catalog shelf always occupies the first content
+ * band, then the existing preview/settings/suggestions layout uses the remaining space unchanged.
  */
 class MenuLayout private constructor(
+    val catalog: UiRect,
     val preview: UiRect,
     val settings: UiRect,
     val suggestions: UiRect?,
     val suggestionsVertical: Boolean,
 ) {
     companion object {
+        const val CATALOG_H = 68
+
         /** Computes the panel layout for a [screenW] x [screenH] screen with the given font [lineHeight]. */
         fun compute(screenW: Int, screenH: Int, lineHeight: Int): MenuLayout {
             val pad = UiTheme.SCREEN_PADDING
             val gap = UiTheme.PANEL_GAP
             val titleY = 6
-            val contentTop = titleY + lineHeight + 8
+            val catalogTop = titleY + lineHeight + 8
+            val contentTop = catalogTop + CATALOG_H + gap
             val contentBottom = screenH - pad
             val totalW = screenW - pad * 2
-            val totalH = contentBottom - contentTop
+            val totalH = max(1, contentBottom - contentTop)
             val leftX = pad
+            val catalog = UiRect(leftX, catalogTop, totalW, CATALOG_H)
 
             val wide = totalW >= 900 && totalH >= 480
             val compact = !wide && totalW < 600
@@ -41,11 +46,12 @@ class MenuLayout private constructor(
                 val settingsMinH = 220 // +30 to fit the 3D-audio settings row alongside the existing four
                 var previewSlice = (totalH * 8) / 10
                 if (totalH - previewSlice - gap < settingsMinH) {
-                    previewSlice = totalH - settingsMinH - gap
+                    previewSlice = max(1, totalH - settingsMinH - gap)
                 }
                 return MenuLayout(
+                    catalog = catalog,
                     preview = UiRect(leftX, contentTop, leftColW, previewSlice),
-                    settings = UiRect(leftX, contentTop + previewSlice + gap, leftColW, totalH - previewSlice - gap),
+                    settings = UiRect(leftX, contentTop + previewSlice + gap, leftColW, max(1, totalH - previewSlice - gap)),
                     suggestions = UiRect(leftX + leftColW + gap, contentTop, rightColW, totalH),
                     suggestionsVertical = true,
                 )
@@ -70,15 +76,16 @@ class MenuLayout private constructor(
             val preview: UiRect
             val settings: UiRect
             if (compact) {
-                val previewH = min(220, topRowH * 3 / 5)
+                val previewH = min(220, max(1, topRowH * 3 / 5))
                 preview = UiRect(leftX, contentTop, totalW, previewH)
-                settings = UiRect(leftX, contentTop + previewH + gap, totalW, topRowH - previewH - gap)
+                settings = UiRect(leftX, contentTop + previewH + gap, totalW, max(1, topRowH - previewH - gap))
             } else {
                 val previewW = (totalW * 6) / 10 - gap / 2
                 preview = UiRect(leftX, contentTop, previewW, topRowH)
                 settings = UiRect(leftX + previewW + gap, contentTop, totalW - previewW - gap, topRowH)
             }
             return MenuLayout(
+                catalog = catalog,
                 preview = preview,
                 settings = settings,
                 suggestions = if (showSuggestions)
