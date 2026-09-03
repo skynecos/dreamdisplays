@@ -44,8 +44,6 @@ import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
 //? if >=26.2 {
 import net.minecraft.client.renderer.SubmitNodeCollector
-import net.minecraft.network.chat.Style
-import net.minecraft.util.FormattedCharSequence
 //?}
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import org.slf4j.LoggerFactory
@@ -267,22 +265,59 @@ class Client : ClientModInitializer, Mod {
     }
 
     //? if >=26.2 {
-    /** Submits subtitle glyphs to the same deferred level collector as the display geometry. */
+    /** Submits subtitle background first, then outline, then the final glyphs to preserve layering. */
     private fun worldTextSubmitter(submitNodeCollector: Any) = WorldTextSubmitter {
-            stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
-        (submitNodeCollector as SubmitNodeCollector).submitText(
+            stack, text, x, y, color, outlineColor, mode, backgroundColor, packedLight ->
+        val collector = submitNodeCollector as SubmitNodeCollector
+        if ((backgroundColor ushr 24) != 0) {
+            collector.submitText(
+                stack,
+                x,
+                y,
+                text,
+                false,
+                mode,
+                packedLight,
+                color,
+                backgroundColor,
+                0,
+            )
+        }
+        if ((outlineColor ushr 24) != 0) {
+            for ((dx, dy) in SUBTITLE_OUTLINE_OFFSETS) {
+                collector.submitText(
+                    stack,
+                    x + dx,
+                    y + dy,
+                    text,
+                    false,
+                    mode,
+                    packedLight,
+                    outlineColor,
+                    0,
+                    0,
+                )
+            }
+        }
+        collector.submitText(
             stack,
             x,
             y,
-            FormattedCharSequence.forward(text, Style.EMPTY),
-            shadow,
+            text,
+            false,
             mode,
             packedLight,
             color,
-            backgroundColor,
+            0,
             0,
         )
     }
+
+    private val SUBTITLE_OUTLINE_OFFSETS = arrayOf(
+        -1f to -1f, 0f to -1f, 1f to -1f,
+        -1f to 0f, 1f to 0f,
+        -1f to 1f, 0f to 1f, 1f to 1f,
+    )
     //?}
     //?}
 
@@ -302,6 +337,6 @@ class Client : ClientModInitializer, Mod {
 
     private companion object {
         /** Logger. */
-        private val logger = LoggerFactory.getLogger("DreamDisplays/FabricClient")
+        private val logger = LoggerFactory.getLogger(javaClass)
     }
 }

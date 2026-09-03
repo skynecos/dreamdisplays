@@ -2,6 +2,8 @@ package com.dreamdisplays.platform.client
 
 import com.dreamdisplays.api.media.audio.model.AcousticQuality
 import com.dreamdisplays.media.source.youtube.cookie.CookieSource
+import com.dreamdisplays.platform.client.subtitles.SubtitleFontPreset
+import com.dreamdisplays.platform.client.subtitles.SubtitleStyleDefaults
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -39,12 +41,54 @@ class Config(private val baseDir: File) {
     /** Output profile for spatialized audio: `true` renders binaural for headphones, `false` a plain stereo pan for speakers. */
     var audioBinauralOutput: Boolean = true
 
+    /** Viewer-local subtitle font preset. */
+    var subtitleFont: String = SubtitleFontPreset.DEFAULT.token
+
+    /** Subtitle size multiplier. 1.0 preserves the existing Kirazium subtitle scale. */
+    var subtitleSize: Double = SubtitleStyleDefaults.SIZE
+
+    /** Opaque ARGB subtitle text color. */
+    var subtitleTextColor: Int = SubtitleStyleDefaults.TEXT_COLOR
+
+    /** ARGB subtitle outline color. Alpha zero means outline disabled. */
+    var subtitleOutlineColor: Int = SubtitleStyleDefaults.OUTLINE_COLOR
+
+    /** RGB/ARGB source color used by the subtitle background plate. */
+    var subtitleBackgroundColor: Int = SubtitleStyleDefaults.BACKGROUND_COLOR
+
+    /** Independent background opacity; text opacity is intentionally unaffected. */
+    var subtitleBackgroundOpacity: Double = SubtitleStyleDefaults.BACKGROUND_OPACITY
+
+    /** Distance from the bottom edge as a fraction of the display height. */
+    var subtitleBottomMargin: Double = SubtitleStyleDefaults.BOTTOM_MARGIN
+
     init {
         load()
     }
 
     /** Re-reads values from disk, replacing any in-memory state. */
     fun reload() = load()
+
+    /** Resets only subtitle appearance, leaving every unrelated client preference untouched. */
+    fun resetSubtitleStyle() {
+        subtitleFont = SubtitleFontPreset.DEFAULT.token
+        subtitleSize = SubtitleStyleDefaults.SIZE
+        subtitleTextColor = SubtitleStyleDefaults.TEXT_COLOR
+        subtitleOutlineColor = SubtitleStyleDefaults.OUTLINE_COLOR
+        subtitleBackgroundColor = SubtitleStyleDefaults.BACKGROUND_COLOR
+        subtitleBackgroundOpacity = SubtitleStyleDefaults.BACKGROUND_OPACITY
+        subtitleBottomMargin = SubtitleStyleDefaults.BOTTOM_MARGIN
+    }
+
+    /** True when subtitle appearance still matches Kirazium's pre-customization rendering. */
+    fun isSubtitleStyleDefault(): Boolean =
+        subtitleFont == SubtitleFontPreset.DEFAULT.token &&
+            kotlin.math.abs(subtitleSize - SubtitleStyleDefaults.SIZE) < 0.0001 &&
+            subtitleTextColor == SubtitleStyleDefaults.TEXT_COLOR &&
+            subtitleOutlineColor == SubtitleStyleDefaults.OUTLINE_COLOR &&
+            subtitleBackgroundColor == SubtitleStyleDefaults.BACKGROUND_COLOR &&
+            kotlin.math.abs(subtitleBackgroundOpacity - SubtitleStyleDefaults.BACKGROUND_OPACITY) < 0.0001 &&
+            kotlin.math.abs(subtitleBottomMargin - SubtitleStyleDefaults.BOTTOM_MARGIN) < 0.0001
 
     /**
      * Loads the configuration from disk, applying default values for missing or malformed entries.
@@ -84,6 +128,17 @@ class Config(private val baseDir: File) {
             "headphones", "auto" -> true
             else -> audioBinauralOutput
         }
+
+        subtitleFont = SubtitleFontPreset.fromToken(data["subtitle-font"]).token
+        subtitleSize = (data["subtitle-size"]?.toDoubleOrNull() ?: subtitleSize)
+            .coerceIn(SubtitleStyleDefaults.MIN_SIZE, SubtitleStyleDefaults.MAX_SIZE)
+        subtitleTextColor = parseArgb(data["subtitle-text-color"], subtitleTextColor, forceOpaque = true)
+        subtitleOutlineColor = parseArgb(data["subtitle-outline-color"], subtitleOutlineColor)
+        subtitleBackgroundColor = parseArgb(data["subtitle-background-color"], subtitleBackgroundColor, forceOpaque = true)
+        subtitleBackgroundOpacity = (data["subtitle-background-opacity"]?.toDoubleOrNull() ?: subtitleBackgroundOpacity)
+            .coerceIn(0.0, 1.0)
+        subtitleBottomMargin = (data["subtitle-bottom-margin"]?.toDoubleOrNull() ?: subtitleBottomMargin)
+            .coerceIn(SubtitleStyleDefaults.MIN_BOTTOM_MARGIN, SubtitleStyleDefaults.MAX_BOTTOM_MARGIN)
     }
 
     /** Persists the current configuration values to disk. */
@@ -100,6 +155,13 @@ class Config(private val baseDir: File) {
             appendLine("unshaded-displays: $unshadedDisplays")
             appendLine("audio-acoustics: ${audioAcoustics.name.lowercase()}")
             appendLine("audio-output-profile: ${if (audioBinauralOutput) "headphones" else "speakers"}")
+            appendLine("subtitle-font: ${subtitleFont.yamlQuoted()}")
+            appendLine("subtitle-size: ${subtitleSize.coerceIn(SubtitleStyleDefaults.MIN_SIZE, SubtitleStyleDefaults.MAX_SIZE)}")
+            appendLine("subtitle-text-color: ${subtitleTextColor.toArgbHex().yamlQuoted()}")
+            appendLine("subtitle-outline-color: ${subtitleOutlineColor.toArgbHex().yamlQuoted()}")
+            appendLine("subtitle-background-color: ${subtitleBackgroundColor.toArgbHex().yamlQuoted()}")
+            appendLine("subtitle-background-opacity: ${subtitleBackgroundOpacity.coerceIn(0.0, 1.0)}")
+            appendLine("subtitle-bottom-margin: ${subtitleBottomMargin.coerceIn(SubtitleStyleDefaults.MIN_BOTTOM_MARGIN, SubtitleStyleDefaults.MAX_BOTTOM_MARGIN)}")
         })
     }
 
@@ -107,6 +169,19 @@ class Config(private val baseDir: File) {
         init {
             System.setProperty("file.encoding", "UTF-8")
         }
+
+        private fun parseArgb(value: String?, fallback: Int, forceOpaque: Boolean = false): Int {
+            val raw = value?.trim()?.removePrefix("#") ?: return fallback
+            val parsed = raw.toLongOrNull(16) ?: return fallback
+            val argb = when (raw.length) {
+                6 -> (0xFF000000L or parsed).toInt()
+                8 -> parsed.toInt()
+                else -> return fallback
+            }
+            return if (forceOpaque) argb or 0xFF000000.toInt() else argb
+        }
+
+        private fun Int.toArgbHex(): String = "#%08X".format(this)
 
         /** Wraps the string in single quotes if it is empty or contains YAML-special characters. */
         private fun String.yamlQuoted(): String =
