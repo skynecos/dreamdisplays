@@ -18,10 +18,13 @@ enum class ServerFeature(override val wire: String) : WireEnum {
     WATCH_PARTY("watch_party"),
 
     /** Server supports broadcast playback. */
-    BROADCAST("broadcast");
+    BROADCAST("broadcast"),
+
+    /** Server can atomically apply a built-in catalog video's URL and its matching subtitle track. */
+    CATALOG_MEDIA("catalog_media");
 
     companion object {
-        /** Playback-related features enabled by the current server implementation. */
+        /** Playback-related features enabled by every current server implementation. */
         val playbackFeatures: List<ServerFeature> = listOf(MODES, WATCH_PARTY, BROADCAST)
 
         /** Playback-related feature tokens for string-based wire protocols. */
