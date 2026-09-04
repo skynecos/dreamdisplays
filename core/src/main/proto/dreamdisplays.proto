@@ -255,21 +255,23 @@ message WatchPartyState {
   // WARNING: a default value decoded when value is missing
   optional string hostName = 5;
   // WARNING: a default value decoded when value is missing
-  optional int32 readyCount = 6;
+  optional string url = 6;
   // WARNING: a default value decoded when value is missing
-  optional int32 nearbyCount = 7;
+  optional string lang = 7;
   // WARNING: a default value decoded when value is missing
-  optional string url = 8;
+  optional int32 readyCount = 8;
   // WARNING: a default value decoded when value is missing
-  optional string lang = 9;
+  optional int32 nearbyCount = 9;
   // WARNING: a default value decoded when value is missing
-  optional int64 positionMs = 10;
+  optional int64 countdownStartEpochMs = 10;
   // WARNING: a default value decoded when value is missing
-  optional int64 serverTimeMs = 11;
+  optional int64 positionMs = 11;
   // WARNING: a default value decoded when value is missing
-  optional bool paused = 12;
+  optional int64 serverTimeMs = 12;
   // WARNING: a default value decoded when value is missing
-  optional int64 countdownStartEpochMs = 13;
+  optional int64 durationMs = 13;
+  // WARNING: a default value decoded when value is missing
+  optional bool paused = 14;
 }
 
 // serial name 'com.dreamdisplays.core.protocol.FullscreenState'
@@ -279,21 +281,21 @@ message FullscreenState {
   // WARNING: a default value decoded when value is missing
   optional Uuid displayId = 2;
   // WARNING: a default value decoded when value is missing
-  optional int32 mode = 3;
+  optional bool active = 3;
   // WARNING: a default value decoded when value is missing
-  optional bool forced = 4;
+  optional int32 mode = 4;
   // WARNING: a default value decoded when value is missing
-  optional string url = 5;
+  optional bool forced = 5;
   // WARNING: a default value decoded when value is missing
-  optional string lang = 6;
+  optional float volume = 6;
   // WARNING: a default value decoded when value is missing
-  optional int64 positionMs = 7;
+  optional string title = 7;
   // WARNING: a default value decoded when value is missing
-  optional int64 serverTimeMs = 8;
+  optional bool loop = 8;
   // WARNING: a default value decoded when value is missing
-  optional bool paused = 9;
+  optional string quality = 9;
   // WARNING: a default value decoded when value is missing
-  optional bool loop = 10;
+  optional bool minimized = 10;
 }
 
 // serial name 'com.dreamdisplays.core.protocol.FullscreenAck'
@@ -345,6 +347,8 @@ message RemotePlaybackToggle {
 }
 
 message Uuid {
-  required fixed64 mostSigBits = 1;
-  required fixed64 leastSigBits = 2;
+  // WARNING: a default value decoded when value is missing
+  optional fixed64 msb = 1;
+  // WARNING: a default value decoded when value is missing
+  optional fixed64 lsb = 2;
 }
