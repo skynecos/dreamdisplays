@@ -1,8 +1,8 @@
-name: Kirazium Naruto catalog emergency release
+name: Kirazium Naruto catalog Windows release
 
-# One-shot quota-safe build. The normal CI stays untouched. This workflow keeps
-# the Linux native bundle and both requested loaders in one job, then attaches
-# the verified jars to a draft GitHub release instead of Actions artifact storage.
+# Quota-safe Windows build for the actual Kirazium client target. Everything stays in one
+# windows-latest job, so no Actions artifacts are uploaded. Verified jars are published to the
+# dedicated naruto-catalog-build branch.
 on:
   push:
     branches:
@@ -12,17 +12,17 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: kirazium-naruto-s1e1-release
+  group: kirazium-naruto-windows-release
   cancel-in-progress: true
 
 permissions:
   contents: write
 
 jobs:
-  build-and-stage:
-    name: Build Paper and Fabric 26.1.2
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+  build-and-publish:
+    name: Build verified Windows x64 Paper and Fabric 26.1.2 jars
+    runs-on: windows-latest
+    timeout-minutes: 75
 
     steps:
       - name: Checkout Naruto catalog branch
@@ -44,33 +44,27 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: Setup Rust
+      - name: Setup Windows x64 Rust target
         shell: bash
         run: |
+          set -euo pipefail
           rustup toolchain install stable --profile minimal
           rustup default stable
-          rustup target add x86_64-unknown-linux-gnu
+          rustup target add x86_64-pc-windows-msvc
           rustc --version
           cargo --version
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2.2.1
-        with:
-          version: 0.16.0
-
-      - name: Install cargo-zigbuild
-        shell: bash
-        run: cargo install cargo-zigbuild --locked
-
-      - name: Install Linux build dependencies and FFmpeg headers
+      - name: Install Windows x64 FFmpeg headers and libraries
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sudo sed -i 's|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 update
-          sudo apt-get install -y clang libclang-dev patchelf pkg-config xz-utils curl
+          python_bin="$(command -v python3 || command -v python || true)"
+          if [[ -z "$python_bin" ]]; then
+            echo "Python is required to resolve the BtbN FFmpeg asset." >&2
+            exit 1
+          fi
 
           release_json="${RUNNER_TEMP}/btbn-ffmpeg-release.json"
           curl -fsSL --retry 3 --retry-all-errors \
@@ -81,12 +75,12 @@ jobs:
             -o "$release_json" \
             https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest
 
-          url="$(python3 - "$release_json" <<'PY'
+          url="$("$python_bin" - "$release_json" <<'PY'
           import json, re, sys
 
-          with open(sys.argv[1], encoding="utf-8") as f:
-              release = json.load(f)
-          pattern = re.compile(r"^ffmpeg-n8\..*-linux64-lgpl-shared-8\.1\.tar\.xz$")
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              release = json.load(handle)
+          pattern = re.compile(r"^ffmpeg-n8\..*-win64-lgpl-shared-8\.1\.zip$")
           url = next(
               (asset["browser_download_url"] for asset in release.get("assets", [])
                if pattern.match(asset.get("name", ""))),
@@ -97,160 +91,220 @@ jobs:
           )"
 
           dest="${RUNNER_TEMP}/ffmpeg"
-          curl -fL --retry 3 --retry-all-errors -o "${RUNNER_TEMP}/ffmpeg.tar.xz" "$url"
-          mkdir -p "${RUNNER_TEMP}/ffmpeg-extract"
-          tar -xf "${RUNNER_TEMP}/ffmpeg.tar.xz" -C "${RUNNER_TEMP}/ffmpeg-extract"
+          curl -fL --retry 3 --retry-all-errors -o "${RUNNER_TEMP}/ffmpeg.zip" "$url"
+          7z x -y "${RUNNER_TEMP}/ffmpeg.zip" -o"${RUNNER_TEMP}/ffmpeg-extract" >/dev/null
           inner="$(find "${RUNNER_TEMP}/ffmpeg-extract" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          test -n "$inner"
           mv "$inner" "$dest"
-          echo "FFMPEG_ROOT=${dest}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=${dest}/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=${dest}/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
 
-      - name: Build and test Linux native libraries
+          test -f "$dest/include/libavcodec/avcodec.h"
+          test -f "$dest/bin/ffmpeg.exe"
+          echo "FFMPEG_DIR=${dest}" >> "$GITHUB_ENV"
+          echo "${dest}/bin" >> "$GITHUB_PATH"
+
+      - name: Build and test Windows x64 native libraries
         shell: bash
         run: |
           set -euo pipefail
-          cargo zigbuild \
+          cargo build \
             --manifest-path native/Cargo.toml \
             --release \
             --package dreamdisplays-native \
             --package dreamdisplays-lav \
             --locked \
-            --target x86_64-unknown-linux-gnu.2.28
+            --target x86_64-pc-windows-msvc
           cargo test \
             --manifest-path native/Cargo.toml \
             --release \
             --package dreamdisplays-native \
             --package dreamdisplays-lav \
             --locked \
-            --target x86_64-unknown-linux-gnu
+            --target x86_64-pc-windows-msvc
 
-      - name: Assemble in-job native bundle
+      - name: Assemble and load-test Windows x64 native bundle
         shell: bash
         run: |
           set -euo pipefail
-          release_dir="native/target/x86_64-unknown-linux-gnu/release"
-          if [[ ! -f "$release_dir/libdreamdisplays_native.so" ]]; then
-            release_dir="native/target/x86_64-unknown-linux-gnu.2.28/release"
-          fi
-
-          out="native/build/ci-bundle/dreamdisplays-natives/linux-x64"
+          release_dir="native/target/x86_64-pc-windows-msvc/release"
+          out="native/build/ci-bundle/dreamdisplays-natives/windows-x64"
           mkdir -p "$out/licenses"
-          cp "$release_dir/libdreamdisplays_native.so" "$out/"
-          cp "$release_dir/libdreamdisplays_lav.so" "$out/"
-          patchelf --set-rpath '$ORIGIN' "$out/libdreamdisplays_native.so" || true
-          patchelf --set-rpath '$ORIGIN' "$out/libdreamdisplays_lav.so" || true
+          cp "$release_dir/dreamdisplays_native.dll" "$out/"
+          cp "$release_dir/dreamdisplays_lav.dll" "$out/"
 
-          "$FFMPEG_ROOT/bin/ffmpeg" -hide_banner -version > "$out/licenses/ffmpeg-version.txt" 2>&1 || true
-          "$FFMPEG_ROOT/bin/ffmpeg" -hide_banner -L > "$out/licenses/ffmpeg-license.txt" 2>&1 || true
-          if [[ ! -s "$out/licenses/ffmpeg-license.txt" ]]; then
-            license_file="$(find "$FFMPEG_ROOT" -maxdepth 2 -iname 'LICENSE*' -type f | head -n 1)"
-            test -n "$license_file"
-            cp "$license_file" "$out/licenses/ffmpeg-license.txt"
-          fi
-
-          test -f "$out/libdreamdisplays_native.so"
-          test -f "$out/libdreamdisplays_lav.so"
+          "$FFMPEG_DIR/bin/ffmpeg.exe" -hide_banner -version > "$out/licenses/ffmpeg-version.txt" 2>&1
+          "$FFMPEG_DIR/bin/ffmpeg.exe" -hide_banner -L > "$out/licenses/ffmpeg-license.txt" 2>&1
           test -s "$out/licenses/ffmpeg-license.txt"
 
-      - name: Build Fabric 26.1.2
-        shell: bash
-        env:
-          DREAMDISPLAYS_REQUIRE_NATIVES: "true"
-          DREAMDISPLAYS_REQUIRED_NATIVE_PLATFORMS: linux-x64
-          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          echo "26.1.2" > versions/active.txt
-          ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel
-
-      - name: Build cross-version Paper plugin
-        shell: bash
-        env:
-          DREAMDISPLAYS_REQUIRE_NATIVES: "true"
-          DREAMDISPLAYS_REQUIRED_NATIVE_PLATFORMS: linux-x64
-          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
-        run: |
-          set -euo pipefail
-          echo "1.21.11" > versions/active.txt
-          ./gradlew :platform:server:shadowJar --no-daemon --parallel
-
-      - name: Verify Naruto catalog jars
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="$(grep '^version' gradle.properties | cut -d'=' -f2 | tr -d ' ')"
-          FABRIC="build/libs/dreamdisplays-fabric-26.1.2-${VERSION}.jar"
-          PAPER="build/libs/dreamdisplays-paper-${VERSION}.jar"
-          test -s "$FABRIC"
-          test -s "$PAPER"
-
-          FABRIC="$FABRIC" PAPER="$PAPER" python3 - <<'PY'
+          python - <<'PY'
+          import ctypes
           import os
-          from zipfile import ZipFile
+          import struct
+          from pathlib import Path
 
-          needles = (
-              b"https://r.aniziumserver.site/46260/1/1/1080p.original.mp4",
-              b"s1_b1_55263308",
-          )
-          for path in (os.environ["FABRIC"], os.environ["PAPER"]):
-              with ZipFile(path) as jar:
-                  class_entries = [name for name in jar.namelist() if name.endswith(".class")]
-                  for needle in needles:
-                      if not any(needle in jar.read(name) for name in class_entries):
-                          raise SystemExit(f"{path} does not contain required Naruto S1E1 catalog data")
+          output = Path("native/build/ci-bundle/dreamdisplays-natives/windows-x64").resolve()
+          native = output / "dreamdisplays_native.dll"
+          lav = output / "dreamdisplays_lav.dll"
 
-          with ZipFile(os.environ["FABRIC"]) as jar:
-              names = set(jar.namelist())
-          required = (
-              "dreamdisplays-natives/linux-x64/libdreamdisplays_native.so",
-              "dreamdisplays-natives/linux-x64/libdreamdisplays_lav.so",
-              "dreamdisplays-natives/linux-x64/licenses/ffmpeg-license.txt",
-              "assets/dreamdisplays/textures/gui/catalog/naruto.png",
-          )
-          missing = [name for name in required if name not in names]
-          if missing:
-              raise SystemExit(f"Fabric jar is missing native entries: {missing}")
+          def require_x64_pe(path: Path) -> None:
+              data = path.read_bytes()
+              if data[:2] != b"MZ":
+                  raise SystemExit(f"{path} is not a Windows PE DLL")
+              pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+              if data[pe_offset:pe_offset + 4] != b"PE\0\0":
+                  raise SystemExit(f"{path} has an invalid PE header")
+              machine = struct.unpack_from("<H", data, pe_offset + 4)[0]
+              if machine != 0x8664:
+                  raise SystemExit(f"{path} is not x86-64 (machine=0x{machine:04x})")
+
+          require_x64_pe(native)
+          require_x64_pe(lav)
+
+          dll_dirs = [os.add_dll_directory(str(output))]
+          dll_dirs.append(os.add_dll_directory(str(Path(os.environ["FFMPEG_DIR"]) / "bin")))
+
+          native_lib = ctypes.CDLL(str(native))
+          native_lib.dd_abi_version.restype = ctypes.c_uint32
+          if native_lib.dd_abi_version() != 1:
+              raise SystemExit("dreamdisplays_native.dll ABI mismatch")
+
+          lav_lib = ctypes.CDLL(str(lav))
+          lav_lib.dd_lav_abi_version.restype = ctypes.c_uint32
+          if lav_lib.dd_lav_abi_version() != 5:
+              raise SystemExit("dreamdisplays_lav.dll ABI mismatch")
+
+          print("Windows x64 PE and native ABI checks passed.")
           PY
 
-          mkdir -p release-files
-          cp "$FABRIC" "$PAPER" release-files/
+      - name: Run core protocol and catalog tests
+        shell: pwsh
+        run: |
+          Set-Content -Path versions/active.txt -Value "1.21.11" -NoNewline
+          .\gradlew.bat :core:test --no-daemon
 
-      - name: Create private draft release with verified jars
-        if: github.event_name == 'workflow_dispatch'
-        shell: bash
+      - name: Build Windows-targeted Fabric 26.1.2 jar
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
+          DREAMDISPLAYS_REQUIRE_NATIVES: "true"
+          DREAMDISPLAYS_REQUIRED_NATIVE_PLATFORMS: windows-x64
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
         run: |
-          set -euo pipefail
-          tag="kirazium-naruto-s1e1-${GITHUB_RUN_ID}"
-          gh release create "$tag" \
-            release-files/*.jar \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Kirazium Naruto katalog test build" \
-            --notes "Quota-safe private draft containing the verified Paper and Fabric 26.1.2 jars for the Naruto catalog." \
-            --draft
+          Set-Content -Path versions/active.txt -Value "26.1.2" -NoNewline
+          .\gradlew.bat :platform:client:fabric:publishJar --no-daemon --parallel
 
-      - name: Publish verified jars to isolated download branch
-        if: github.event_name == 'push'
+      - name: Build matching cross-version Paper jar
+        shell: pwsh
+        env:
+          DREAMDISPLAYS_REQUIRE_NATIVES: "true"
+          DREAMDISPLAYS_REQUIRED_NATIVE_PLATFORMS: windows-x64
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
+        run: |
+          Set-Content -Path versions/active.txt -Value "1.21.11" -NoNewline
+          .\gradlew.bat :platform:server:shadowJar --no-daemon --parallel
+
+      - name: Verify Windows Naruto catalog jars
         shell: bash
         run: |
           set -euo pipefail
-          staged="${RUNNER_TEMP}/naruto-catalog-jars"
+          python - <<'PY'
+          import hashlib
+          import os
+          import struct
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          properties = {}
+          for raw in Path("gradle.properties").read_text(encoding="utf-8").splitlines():
+              if "=" in raw and not raw.lstrip().startswith("#"):
+                  key, value = raw.split("=", 1)
+                  properties[key.strip()] = value.strip()
+          version = properties["version"]
+          fabric = Path(f"build/libs/dreamdisplays-fabric-26.1.2-{version}.jar")
+          paper = Path(f"build/libs/dreamdisplays-paper-{version}.jar")
+          for jar in (fabric, paper):
+              if not jar.is_file() or jar.stat().st_size == 0:
+                  raise SystemExit(f"Missing or empty jar: {jar}")
+
+          media_needles = (
+              b"https://r.aniziumserver.site/46260/1/1/1080p.original.mp4",
+              b"https://x.anizium.co/api/subtitle/get/file.vtt?id=921466367&name=s1_b1_55263308&season=1&episode=1",
+              b"https://r.aniziumserver.site/46260/1/2/1080p.original.mp4",
+              b"https://x.anizium.co/api/subtitle/get/file.vtt?id=921466367&name=s1_b2_18730010&season=1&episode=2",
+          )
+          for jar_path in (fabric, paper):
+              with ZipFile(jar_path) as jar:
+                  classes = [name for name in jar.namelist() if name.endswith(".class")]
+                  for needle in media_needles:
+                      if not any(needle in jar.read(name) for name in classes):
+                          raise SystemExit(f"{jar_path} is missing catalog value {needle!r}")
+
+          native_root = Path("native/build/ci-bundle/dreamdisplays-natives/windows-x64")
+          required = {
+              "dreamdisplays-natives/windows-x64/dreamdisplays_native.dll": native_root / "dreamdisplays_native.dll",
+              "dreamdisplays-natives/windows-x64/dreamdisplays_lav.dll": native_root / "dreamdisplays_lav.dll",
+              "dreamdisplays-natives/windows-x64/licenses/ffmpeg-license.txt": native_root / "licenses/ffmpeg-license.txt",
+          }
+          art_name = "assets/dreamdisplays/textures/gui/catalog/naruto.png"
+          expected_art_sha256 = "f0098708a62f44cdbb544165739150e9e110c5aa758d64075e660307bc1969ba"
+
+          with ZipFile(fabric) as jar:
+              names = set(jar.namelist())
+              missing = [name for name in (*required, art_name) if name not in names]
+              if missing:
+                  raise SystemExit(f"Fabric jar is missing required entries: {missing}")
+              unwanted = [name for name in names if name.startswith("dreamdisplays-natives/linux-")]
+              if unwanted:
+                  raise SystemExit(f"Windows jar unexpectedly contains Linux native entries: {unwanted}")
+              for entry, source in required.items():
+                  embedded = jar.read(entry)
+                  if not embedded or embedded != source.read_bytes():
+                      raise SystemExit(f"Embedded native does not match its verified source: {entry}")
+              art = jar.read(art_name)
+              if art[:8] != b"\x89PNG\r\n\x1a\n":
+                  raise SystemExit("Naruto artwork is not a PNG")
+              if struct.unpack(">II", art[16:24]) != (256, 144):
+                  raise SystemExit("Naruto artwork is not 256x144")
+              if hashlib.sha256(art).hexdigest() != expected_art_sha256:
+                  raise SystemExit("Naruto artwork hash mismatch")
+
+          release = Path("release-files")
+          release.mkdir(exist_ok=True)
+          for jar in (fabric, paper):
+              (release / jar.name).write_bytes(jar.read_bytes())
+
+          source_sha = os.environ["GITHUB_SHA"]
+          info = (
+              f"source_commit={source_sha}\n"
+              "native_target=windows-x64\n"
+              "minecraft=26.1.2\n"
+              "catalog_episodes=1,2\n"
+              "native_abi=1\n"
+              "lav_abi=5\n"
+          )
+          (release / "BUILD_INFO.txt").write_text(info, encoding="utf-8")
+          for jar in (fabric, paper):
+              digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+              print(f"{digest}  {jar.name}")
+          print("Windows Naruto catalog jar verification passed.")
+          PY
+
+          (cd release-files && sha256sum *.jar > SHA256SUMS.txt)
+
+      - name: Publish verified Windows jars to isolated download branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged="${RUNNER_TEMP}/naruto-catalog-windows-jars"
           output="${RUNNER_TEMP}/naruto-catalog-output"
           mkdir -p "$staged"
-          cp release-files/*.jar "$staged/"
+          cp release-files/* "$staged/"
 
           git worktree add --detach "$output" "$GITHUB_SHA"
           cd "$output"
           git switch --orphan naruto-catalog-build
           mkdir -p artifacts
-          cp "$staged"/*.jar artifacts/
-          sha256sum artifacts/*.jar > artifacts/SHA256SUMS.txt
+          cp "$staged"/* artifacts/
           git add artifacts
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit -m "build: Naruto catalog Paper and Fabric jars"
+              commit -m "build: verified Windows x64 Naruto catalog jars"
           git push --force origin HEAD:refs/heads/naruto-catalog-build
