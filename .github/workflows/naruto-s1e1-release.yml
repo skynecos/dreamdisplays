@@ -246,7 +246,6 @@ jobs:
           git worktree add --detach "$output" "$GITHUB_SHA"
           cd "$output"
           git switch --orphan naruto-catalog-build
-          git rm -rf .
           mkdir -p artifacts
           cp "$staged"/*.jar artifacts/
           sha256sum artifacts/*.jar > artifacts/SHA256SUMS.txt
