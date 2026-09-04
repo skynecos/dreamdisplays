@@ -18,7 +18,8 @@ class MenuLayout private constructor(
     val suggestionsVertical: Boolean,
 ) {
     companion object {
-        const val CATALOG_H = 68
+        // Fits a 16:9, 120x68 series card without cropping or stretching its artwork.
+        const val CATALOG_H = 104
 
         /** Computes the panel layout for a [screenW] x [screenH] screen with the given font [lineHeight]. */
         fun compute(screenW: Int, screenH: Int, lineHeight: Int): MenuLayout {
