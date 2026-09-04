@@ -4,14 +4,11 @@ name: Kirazium Naruto catalog emergency release
 # the Linux native bundle and both requested loaders in one job, then attaches
 # the verified jars to a draft GitHub release instead of Actions artifact storage.
 on:
-  pull_request:
+  push:
     branches:
-      - main
+      - feature/naruto-catalog
     paths:
       - .github/workflows/naruto-s1e1-release.yml
-      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/catalog/AnimeCatalogOverlay.kt
-      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/menu/MenuLayout.kt
-      - platform/client/common/src/main/resources/assets/dreamdisplays/textures/gui/catalog/naruto.png
   workflow_dispatch:
 
 concurrency:
@@ -235,3 +232,26 @@ jobs:
             --title "Kirazium Naruto katalog test build" \
             --notes "Quota-safe private draft containing the verified Paper and Fabric 26.1.2 jars for the Naruto catalog." \
             --draft
+
+      - name: Publish verified jars to isolated download branch
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged="${RUNNER_TEMP}/naruto-catalog-jars"
+          output="${RUNNER_TEMP}/naruto-catalog-output"
+          mkdir -p "$staged"
+          cp release-files/*.jar "$staged/"
+
+          git worktree add --detach "$output" "$GITHUB_SHA"
+          cd "$output"
+          git switch --orphan naruto-catalog-build
+          git rm -rf .
+          mkdir -p artifacts
+          cp "$staged"/*.jar artifacts/
+          sha256sum artifacts/*.jar > artifacts/SHA256SUMS.txt
+          git add artifacts
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "build: Naruto catalog Paper and Fabric jars"
+          git push --force origin HEAD:refs/heads/naruto-catalog-build
