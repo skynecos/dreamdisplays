@@ -3,8 +3,10 @@ package com.dreamdisplays.platform.client.mixins
 import com.dreamdisplays.api.runtime.registry.service.getOrNull
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.overlay.OverlayManager
+import com.dreamdisplays.platform.client.ui.DisplayMenu
 import com.dreamdisplays.platform.client.ui.FullscreenOverlayManager
 import com.dreamdisplays.platform.client.ui.MinecraftOverlayRenderContext
+import com.dreamdisplays.platform.client.ui.catalog.AnimeCatalogOverlay
 import com.dreamdisplays.platform.client.utils.MinecraftScreenUtil
 import net.minecraft.client.Minecraft
 //? if >=26 {
@@ -55,7 +57,7 @@ open class ScreenOverlay {
         FullscreenOverlayManager.renderAll(mc, graphics, partialTick)
     }
 
-    // Renders all active PiP overlays on top of the current screen after the normal render pass
+    // Renders the catalog shelf and all active PiP overlays on top of the current screen after the normal render pass
     //? if >=26 {
     @Inject(
         method = ["extractRenderStateWithTooltipAndSubtitles"],
@@ -84,22 +86,33 @@ open class ScreenOverlay {
         )
         open fun onRenderReturn(graphics: GuiGraphics, mouseX: Int, mouseY: Int, partialTick: Float, ci: CallbackInfo) {*/
         val mc = Minecraft.getInstance()
-        if (!FullscreenOverlayManager.isEmpty &&
-            MinecraftScreenUtil.isTransientLoadingScreen(MinecraftScreenUtil.currentScreen(mc))
-        ) {
+        val currentScreen = MinecraftScreenUtil.currentScreen(mc)
+        if (!FullscreenOverlayManager.isEmpty && MinecraftScreenUtil.isTransientLoadingScreen(currentScreen)) {
             //? if >=1.21.11 {
             graphics.nextStratum()
             //?}
             FullscreenOverlayManager.renderAll(mc, graphics, partialTick)
         }
-        val overlays = DreamServices.registry.getOrNull<OverlayManager>() ?: return
-        if (overlays.isEmpty) return
+
         val window =
             //? if >=1.21.11 {
             mc.window.handle()
         //?} else
         /*mc.window.window*/
         val leftPressed = GLFW.glfwGetMouseButton(window, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
+
+        if (currentScreen is DisplayMenu) {
+            // The menu layout reserves this band, so drawing it after normal widgets cannot cover a control.
+            //? if >=1.21.11 {
+            graphics.nextStratum()
+            //?}
+            AnimeCatalogOverlay.render(currentScreen, graphics, mouseX, mouseY, leftPressed)
+        } else {
+            AnimeCatalogOverlay.onOtherScreen()
+        }
+
+        val overlays = DreamServices.registry.getOrNull<OverlayManager>() ?: return
+        if (overlays.isEmpty) return
         //? if >=1.21.11 {
         graphics.nextStratum()
         //?}

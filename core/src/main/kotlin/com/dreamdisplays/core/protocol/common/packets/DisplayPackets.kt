@@ -62,12 +62,20 @@ data class RequestSync(
     @ProtoNumber(1) val id: @Serializable(UuidSerializer::class) UUID = ZERO_UUID,
 ) : DreamPacket
 
-/** Client applies a new media URL / audio language to a display. */
+/**
+ * Client applies a new media URL / audio language to a display.
+ *
+ * [replaceSubtitle] is deliberately opt-in for wire compatibility: ordinary DreamDisplays video
+ * changes keep their historical behaviour (a changed video clears subtitles), while catalog picks
+ * can atomically replace the video and its matching WebVTT source in the same authoritative update.
+ */
 @Serializable
 data class SetVideo(
     @ProtoNumber(1) val id: @Serializable(UuidSerializer::class) UUID = ZERO_UUID,
     @ProtoNumber(2) val url: String = "",
     @ProtoNumber(3) val lang: String = "",
+    @ProtoNumber(4) val subtitleUrl: String = "",
+    @ProtoNumber(5) val replaceSubtitle: Boolean = false,
 ) : DreamPacket
 
 /** Client toggles the locked flag of a display it owns. */

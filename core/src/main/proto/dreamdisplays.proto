@@ -170,6 +170,10 @@ message SetVideo {
   optional string url = 2;
   // WARNING: a default value decoded when value is missing
   optional string lang = 3;
+  // WARNING: a default value decoded when value is missing
+  optional string subtitleUrl = 4;
+  // WARNING: a default value decoded when value is missing
+  optional bool replaceSubtitle = 5;
 }
 
 // serial name 'com.dreamdisplays.core.protocol.SetLocked'

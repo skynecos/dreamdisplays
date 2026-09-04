@@ -50,7 +50,7 @@ object PaperV2Networking : PluginMessageListener {
         isPremium = player.hasPermission(PaperServer.config.permissions.premium),
         isAdmin = player.hasPermission(PaperServer.config.permissions.delete),
         isReportingEnabled = PaperServer.config.settings.webhookUrl.isNotEmpty(),
-        allowedFeatures = ServerFeature.playbackFeatureWires,
+        allowedFeatures = ServerFeature.playbackFeatureWires + ServerFeature.CATALOG_MEDIA.wire,
         defaultVolume = PaperServer.config.settings.defaultVolume,
         maxDisplays = maxDisplaysFor(player.hasPermission(PaperServer.config.permissions.createBypass)),
     )
@@ -74,7 +74,11 @@ object PaperV2Networking : PluginMessageListener {
             is ReportDuration -> DisplayActions.reportDuration(player, packet.id, packet.durationMs)
             is DisplayDelete -> DisplayActions.delete(player, packet.id)
             is ReportDisplay -> DisplayManager.report(packet.id, player)
-            is SetVideo -> DisplayActions.setVideo(player, packet.id, packet.url, packet.lang)
+            is SetVideo -> if (packet.replaceSubtitle) {
+                CatalogMediaActions.setMedia(player, packet.id, packet.url, packet.lang, packet.subtitleUrl)
+            } else {
+                DisplayActions.setVideo(player, packet.id, packet.url, packet.lang)
+            }
             is SetLocked -> DisplayActions.setLocked(player, packet.id, packet.locked)
             is SetMode -> DisplayActions.setMode(
                 player,
