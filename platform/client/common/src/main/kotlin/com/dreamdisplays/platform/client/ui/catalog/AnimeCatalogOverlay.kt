@@ -1,11 +1,14 @@
 package com.dreamdisplays.platform.client.ui.catalog
 
+import com.dreamdisplays.api.capability.ServerFeature
+import com.dreamdisplays.core.protocol.common.hasFeature
 import com.dreamdisplays.core.protocol.common.packets.SetVideo
 import com.dreamdisplays.platform.client.Initializer
 import com.dreamdisplays.platform.client.catalog.AnimeCatalog
 import com.dreamdisplays.platform.client.catalog.AnimeEpisode
 import com.dreamdisplays.platform.client.catalog.AnimeSeason
 import com.dreamdisplays.platform.client.catalog.AnimeSeries
+import com.dreamdisplays.platform.client.managers.ClientPacketManager
 import com.dreamdisplays.platform.client.ui.DisplayMenu
 import com.dreamdisplays.platform.client.ui.GuiGraphicsCompat
 import com.dreamdisplays.platform.client.ui.drawText
@@ -39,6 +42,10 @@ object AnimeCatalogOverlay {
     private const val NAV_W = 22
     private const val BACK_W = 48
 
+    /** True only when the connected server explicitly supports atomic catalog video + subtitle picks. */
+    private fun catalogSupported(): Boolean =
+        ClientPacketManager.serverSnapshot.hasFeature(ServerFeature.CATALOG_MEDIA)
+
     /** Resets transient mouse state when the display menu is not the active screen. */
     fun onOtherScreen() {
         wasLeftPressed = false
@@ -47,6 +54,15 @@ object AnimeCatalogOverlay {
     /** Draws the shelf and handles one edge-triggered left click per physical press. */
     fun render(menu: DisplayMenu, g: GuiGraphicsCompat, mouseX: Int, mouseY: Int, leftPressed: Boolean) {
         val display = menu.displayScreen
+
+        // Never expose catalog controls against an older/incompatible server, and never draw them on
+        // top of DisplayMenu's loading-error panel. Track the physical press even while hidden so a
+        // held mouse/touch cannot become an accidental catalog click when the state changes.
+        if (!catalogSupported() || display.errored) {
+            wasLeftPressed = leftPressed
+            return
+        }
+
         if (lastDisplayId != display.uuid) {
             lastDisplayId = display.uuid
             resetNavigation()
@@ -267,7 +283,7 @@ object AnimeCatalogOverlay {
 
     private fun playEpisode(menu: DisplayMenu, episode: AnimeEpisode) {
         val display = menu.displayScreen
-        if (!display.canSetVideoHere) return
+        if (!catalogSupported() || !display.canSetVideoHere || display.errored) return
         Initializer.sendPacket(
             SetVideo(
                 id = display.uuid,
