@@ -50,7 +50,7 @@ object PaperV2Networking : PluginMessageListener {
         isPremium = player.hasPermission(PaperServer.config.permissions.premium),
         isAdmin = player.hasPermission(PaperServer.config.permissions.delete),
         isReportingEnabled = PaperServer.config.settings.webhookUrl.isNotEmpty(),
-        allowedFeatures = ServerFeature.playbackFeatureWires,
+        allowedFeatures = ServerFeature.playbackFeatureWires + ServerFeature.CATALOG_MEDIA.wire,
         defaultVolume = PaperServer.config.settings.defaultVolume,
         maxDisplays = maxDisplaysFor(player.hasPermission(PaperServer.config.permissions.createBypass)),
     )
