@@ -1,4 +1,4 @@
-name: Kirazium Naruto S1E1 emergency release
+name: Kirazium Naruto catalog emergency release
 
 # One-shot quota-safe build. The normal CI stays untouched. This workflow keeps
 # the Linux native bundle and both requested loaders in one job, then attaches
@@ -9,6 +9,9 @@ on:
       - feature/naruto-catalog
     paths:
       - .github/workflows/naruto-s1e1-release.yml
+      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/catalog/AnimeCatalogOverlay.kt
+      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/menu/MenuLayout.kt
+      - platform/client/common/src/main/resources/assets/dreamdisplays/textures/gui/catalog/naruto.png
   workflow_dispatch:
 
 concurrency:
@@ -176,7 +179,7 @@ jobs:
           echo "1.21.11" > versions/active.txt
           ./gradlew :platform:server:shadowJar --no-daemon --parallel
 
-      - name: Verify Naruto S1E1 jars
+      - name: Verify Naruto catalog jars
         shell: bash
         run: |
           set -euo pipefail
@@ -207,6 +210,7 @@ jobs:
               "dreamdisplays-natives/linux-x64/libdreamdisplays_native.so",
               "dreamdisplays-natives/linux-x64/libdreamdisplays_lav.so",
               "dreamdisplays-natives/linux-x64/licenses/ffmpeg-license.txt",
+              "assets/dreamdisplays/textures/gui/catalog/naruto.png",
           )
           missing = [name for name in required if name not in names]
           if missing:
@@ -227,6 +231,6 @@ jobs:
             release-files/*.jar \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "Kirazium Naruto S1 Bölüm 1 test build" \
-            --notes "Quota-safe private draft containing the verified Paper and Fabric 26.1.2 jars for Naruto S1 Bölüm 1." \
+            --title "Kirazium Naruto katalog test build" \
+            --notes "Quota-safe private draft containing the verified Paper and Fabric 26.1.2 jars for the Naruto catalog." \
             --draft
