@@ -132,8 +132,11 @@ class DisplayScreen(
     /** True while a media error is active. */
     val errored: Boolean get() = mediaError != null
 
-    /** True if the local player may edit this display (owner, admin, or not effectively locked). */
-    val canEdit: Boolean get() = owner || isAdmin || !effectiveLocked
+    /** True if the local player may open management or mutate shared display state. */
+    val canManageDisplay: Boolean get() = PlaybackPermissions.canManageDisplay(ctx())
+
+    /** Compatibility alias used by existing owner-only UI state. */
+    val canEdit: Boolean get() = canManageDisplay
 
     /** Whether the user has muted this display. */
     var muted: Boolean = savedSettings.muted
@@ -396,8 +399,43 @@ class DisplayScreen(
     /** Audio track / language of the current video, or `null` when idle. */
     var lang: String? = null; private set
 
-    /** Current server-provided WebVTT URL, empty while subtitles are disabled. */
+    /** Current server-provided WebVTT URL. Viewers cannot replace it. */
     var subtitleUrl: String = ""; private set
+
+    /** Viewer-local subtitle visibility. */
+    var subtitlesEnabled: Boolean = savedSettings.subtitlesEnabled
+        set(value) {
+            if (field == value) return
+            field = value
+            persistSubtitlePreferences()
+        }
+
+    /** Viewer-local subtitle text scale. */
+    var subtitleScale: Float = savedSettings.subtitleScale.coerceIn(0.5f, 2.0f)
+        set(value) {
+            val normalized = value.coerceIn(0.5f, 2.0f)
+            if (field == normalized) return
+            field = normalized
+            persistSubtitlePreferences()
+        }
+
+    /** Viewer-local subtitle vertical position. */
+    var subtitleVerticalPosition: Float = savedSettings.subtitleVerticalPosition.coerceIn(0f, 1f)
+        set(value) {
+            val normalized = value.coerceIn(0f, 1f)
+            if (field == normalized) return
+            field = normalized
+            persistSubtitlePreferences()
+        }
+
+    private fun persistSubtitlePreferences() {
+        ClientSettingsStore.setSubtitlePreferences(
+            uuid,
+            subtitlesEnabled,
+            subtitleScale,
+            subtitleVerticalPosition,
+        )
+    }
 
     /** Asynchronously loaded immutable WebVTT track for this display. */
     private val subtitles = WebVttController(uuid)

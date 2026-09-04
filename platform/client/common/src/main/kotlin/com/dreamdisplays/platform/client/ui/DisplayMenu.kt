@@ -704,9 +704,15 @@ class DisplayMenu private constructor(
         /** The three sync-mode notches exposed by the playback-mode slider. */
         private val SYNC_MODES = listOf(PlaybackMode.LOCAL, PlaybackMode.SYNCED, PlaybackMode.BROADCAST)
 
-        /** Opens the menu for [displayScreen]. */
+        /**
+         * Opens full management only for the owner / an admin. Every other viewer is routed to the
+         * client-local subtitle screen, so no video or display controls are exposed.
+         */
         fun open(displayScreen: DisplayScreen) {
-            MinecraftScreenUtil.setScreen(Minecraft.getInstance(), DisplayMenu(displayScreen))
+            val screen =
+                if (displayScreen.canManageDisplay) DisplayMenu(displayScreen)
+                else SubtitlePreferencesMenu(displayScreen)
+            MinecraftScreenUtil.setScreen(Minecraft.getInstance(), screen)
         }
     }
 }

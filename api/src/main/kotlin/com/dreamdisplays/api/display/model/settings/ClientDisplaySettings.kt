@@ -49,6 +49,15 @@ data class ClientDisplaySettings(
 
     /** Whether the 3D acoustics engine applies to this display; false forces the legacy distance-gain-only path. */
     var acousticsEnabled: Boolean = true,
+
+    /** Viewer-local subtitle visibility. Never sent to or persisted by the server. */
+    var subtitlesEnabled: Boolean = true,
+
+    /** Viewer-local subtitle text scale. Clamped to [0.5, 2.0] by the client. */
+    var subtitleScale: Float = 1.0f,
+
+    /** Viewer-local vertical subtitle position, from 0.0 (bottom) to 1.0 (higher). */
+    var subtitleVerticalPosition: Float = 0.15f,
 ) {
 
     companion object {

@@ -246,6 +246,7 @@ object VanillaDisplayActions {
     /** Applies a client-reported media duration to the display's server timeline (SYNCED/BROADCAST only). */
     fun reportDuration(player: ServerPlayer, displayId: java.util.UUID, durationMs: Long) {
         val displayData = DisplayManager.getDisplayData(displayId) ?: return
+        if (!PlaybackPermissions.canManageDisplay(context(displayData, player))) return
         TimelineManager.onDurationReported(displayData, player.uuid, durationMs)
     }
 

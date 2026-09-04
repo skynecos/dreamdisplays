@@ -48,22 +48,34 @@ class PlaybackCoreTest {
     ) = PlaybackContext(mode, owner, admin, locked, party, host)
 
     @Test
-    fun localControlsRespectLock() {
-        assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.LOCAL, owner = false, locked = false)))
-        assertFalse(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.LOCAL, owner = false, locked = true)))
+    fun localControlsAreOwnerOrAdminOnly() {
+        assertFalse(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.LOCAL, locked = false)))
+        assertFalse(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.LOCAL, locked = true)))
         assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.LOCAL, owner = true, locked = true)))
+        assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.LOCAL, admin = true, locked = false)))
     }
 
     @Test
-    fun syncedNeedsEditor() {
-        assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.SYNCED, owner = true)))
-        assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.SYNCED, locked = false)))
+    fun syncedControlsAreOwnerOrAdminOnly() {
+        assertFalse(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.SYNCED, locked = false)))
         assertFalse(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.SYNCED, locked = true)))
+        assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.SYNCED, owner = true)))
+        assertTrue(PlaybackPermissions.canPlayPause(ctx(PlaybackMode.SYNCED, admin = true)))
+    }
+
+    @Test
+    fun unlockedViewerCannotMutateSharedDisplayState() {
+        val viewer = ctx(PlaybackMode.LOCAL, locked = false)
+        assertFalse(PlaybackPermissions.canManageDisplay(viewer))
+        assertFalse(PlaybackPermissions.canSetVideo(viewer))
+        assertFalse(PlaybackPermissions.canSetMode(viewer))
+        assertFalse(PlaybackPermissions.canStartWatchParty(viewer))
+        assertFalse(PlaybackPermissions.canToggleLock(viewer))
     }
 
     @Test
     fun watchPartyIsHostOnlyAndForcedLocked() {
-        assertTrue(PlaybackPermissions.canControlWatchParty(ctx(PlaybackMode.WATCH_PARTY, host = true)))
+        assertTrue(PlaybackPermissions.canControlWatchParty(ctx(PlaybackMode.WATCH_PARTY, owner = true, host = true)))
         assertFalse(PlaybackPermissions.canControlWatchParty(ctx(PlaybackMode.WATCH_PARTY, owner = true, host = false)))
         assertFalse(PlaybackPermissions.canToggleLock(ctx(PlaybackMode.WATCH_PARTY, admin = true)))
         assertTrue(PlaybackPermissions.isEffectivelyLocked(PlaybackMode.WATCH_PARTY, baseLocked = false))
@@ -78,9 +90,10 @@ class PlaybackCoreTest {
     }
 
     @Test
-    fun startWatchPartyRespectsLock() {
-        assertTrue(PlaybackPermissions.canStartWatchParty(ctx(PlaybackMode.SYNCED, owner = false, locked = false)))
-        assertFalse(PlaybackPermissions.canStartWatchParty(ctx(PlaybackMode.SYNCED, owner = false, locked = true)))
+    fun startWatchPartyIsOwnerOrAdminOnly() {
+        assertFalse(PlaybackPermissions.canStartWatchParty(ctx(PlaybackMode.SYNCED, locked = false)))
+        assertFalse(PlaybackPermissions.canStartWatchParty(ctx(PlaybackMode.SYNCED, locked = true)))
         assertTrue(PlaybackPermissions.canStartWatchParty(ctx(PlaybackMode.SYNCED, owner = true, locked = true)))
+        assertTrue(PlaybackPermissions.canStartWatchParty(ctx(PlaybackMode.SYNCED, admin = true, locked = false)))
     }
 }

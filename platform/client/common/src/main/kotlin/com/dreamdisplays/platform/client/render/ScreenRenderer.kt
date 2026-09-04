@@ -187,7 +187,8 @@ object ScreenRenderer : ClientRenderService {
     /** Subtitles occupy at most this fraction of the video width and lower-screen height. */
     private const val SUBTITLE_WIDTH_FRACTION = 0.88f
     private const val SUBTITLE_HEIGHT_FRACTION = 0.42f
-    private const val SUBTITLE_BOTTOM_MARGIN = 0.075f
+    private const val SUBTITLE_MIN_BOTTOM_MARGIN = 0.03f
+    private const val SUBTITLE_MAX_BOTTOM_MARGIN = 0.33f
     private const val SUBTITLE_LIFT = 0.20f
     private const val SUBTITLE_MAX_LINES = 4
 
@@ -197,14 +198,16 @@ object ScreenRenderer : ClientRenderService {
         stack: PoseStack,
         submitText: WorldTextSubmitter?,
     ) {
-        if (!displayScreen.isVideoStarted) return
+        if (!displayScreen.isVideoStarted || !displayScreen.subtitlesEnabled) return
         val rawLines = displayScreen.activeSubtitleLines
         if (rawLines.isEmpty()) return
 
         val minecraft = Minecraft.getInstance()
         val font = minecraft.font
         val lineAdvancePixels = font.lineHeight + 2
-        val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
+        val desiredLineHeightBlocks =
+            ((displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f) * displayScreen.subtitleScale)
+                .coerceIn(0.35f, 3.2f)
         // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so
         // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.
         val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
@@ -230,7 +233,9 @@ object ScreenRenderer : ClientRenderService {
             displayScreen.width,
             displayScreen.height,
         )
-        stack.translate(0.5f, SUBTITLE_BOTTOM_MARGIN + totalHeight, 0f)
+        val bottomMargin = SUBTITLE_MIN_BOTTOM_MARGIN +
+            (SUBTITLE_MAX_BOTTOM_MARGIN - SUBTITLE_MIN_BOTTOM_MARGIN) * displayScreen.subtitleVerticalPosition
+        stack.translate(0.5f, bottomMargin + totalHeight, 0f)
         stack.scale(textScaleX, -textScaleY, 1f)
 
         //? if <26.2 {

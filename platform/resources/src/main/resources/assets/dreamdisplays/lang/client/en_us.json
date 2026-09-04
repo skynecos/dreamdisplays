@@ -58,7 +58,7 @@
   "dreamdisplays.button.lock.tooltip.1": "Lock display",
   "dreamdisplays.button.lock.tooltip.2": "Only you can change settings",
   "dreamdisplays.button.unlock.tooltip.1": "Unlock display",
-  "dreamdisplays.button.unlock.tooltip.2": "Anyone can change settings (except delete)",
+  "dreamdisplays.button.unlock.tooltip.2": "Viewers can watch; only the owner or an admin can change settings",
   "dreamdisplays.button.delete": "Delete",
   "dreamdisplays.button.delete.tooltip.1": "Delete display",
   "dreamdisplays.button.delete.tooltip.2": "Permanently removes this display",
@@ -95,5 +95,10 @@
   "dreamdisplays.sort.watched": "Watched",
   "dreamdisplays.ui.custom": "Link",
   "dreamdisplays.sort.my_links": "My links",
-  "dreamdisplays.suggestions.no_links": "No saved links yet. Paste a video link above to play it."
+  "dreamdisplays.suggestions.no_links": "No saved links yet. Paste a video link above to play it.",
+  "dreamdisplays.ui.subtitle_preferences": "Subtitle settings",
+  "dreamdisplays.ui.subtitle_local_only": "These settings only affect your client.",
+  "dreamdisplays.button.subtitles": "Subtitles",
+  "dreamdisplays.button.subtitle_size": "Text size",
+  "dreamdisplays.button.subtitle_position": "Vertical position"
 }

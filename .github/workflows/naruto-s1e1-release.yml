@@ -7,8 +7,7 @@ on:
   push:
     branches:
       - feature/naruto-catalog
-    paths:
-      - .github/workflows/naruto-s1e1-release.yml
+      - feature/naruto-personal-subtitles
   workflow_dispatch:
 
 concurrency:

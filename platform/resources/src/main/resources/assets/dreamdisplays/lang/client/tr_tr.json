@@ -1,0 +1,9 @@
+{
+  "dreamdisplays.ui.subtitle_preferences": "Altyazı ayarları",
+  "dreamdisplays.ui.subtitle_local_only": "Bu ayarlar yalnızca senin istemcinde geçerlidir.",
+  "dreamdisplays.button.subtitles": "Altyazılar",
+  "dreamdisplays.button.subtitle_size": "Yazı boyutu",
+  "dreamdisplays.button.subtitle_position": "Dikey konum",
+  "dreamdisplays.button.enabled": "Açık",
+  "dreamdisplays.button.disabled": "Kapalı"
+}

@@ -111,6 +111,20 @@ object ClientSettingsStore : ClientSettingsStorage {
         save()
     }
 
+    /** Saves subtitle preferences that belong exclusively to this viewer and display. */
+    fun setSubtitlePreferences(
+        displayUuid: UUID,
+        enabled: Boolean,
+        scale: Float,
+        verticalPosition: Float,
+    ) {
+        val s = getSettings(displayUuid)
+        s.subtitlesEnabled = enabled
+        s.subtitleScale = scale.coerceIn(0.5f, 2.0f)
+        s.subtitleVerticalPosition = verticalPosition.coerceIn(0f, 1f)
+        save()
+    }
+
     /** Removes the settings for [displayUuid], persisting only if an entry existed. Returns whether anything was removed. */
     override fun remove(displayUuid: UUID): Boolean {
         val removed = settings.remove(displayUuid) != null

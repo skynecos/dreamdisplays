@@ -141,6 +141,8 @@ object TimelineManager {
      */
     fun onDurationReported(display: DisplayData, senderId: UUID, durationMs: Long) {
         if (display.mode != PlaybackMode.SYNCED && display.mode != PlaybackMode.BROADCAST) return
+        val ctx = PlaybackContexts.of(display, senderId, transport.isAdmin(senderId))
+        if (!PlaybackPermissions.canManageDisplay(ctx)) return
         if (durationMs !in MIN_DURATION_MS..MAX_DURATION_MS) return
         if ((display.duration ?: 0L) > 0L) return
         // Checked before the throttle below: an attacker who is never nearby must not be able to
