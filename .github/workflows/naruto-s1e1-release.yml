@@ -12,6 +12,14 @@ on:
       - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/catalog/AnimeCatalogOverlay.kt
       - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/menu/MenuLayout.kt
       - platform/client/common/src/main/resources/assets/dreamdisplays/textures/gui/catalog/naruto.png
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/naruto-s1e1-release.yml
+      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/catalog/AnimeCatalogOverlay.kt
+      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/menu/MenuLayout.kt
+      - platform/client/common/src/main/resources/assets/dreamdisplays/textures/gui/catalog/naruto.png
   workflow_dispatch:
 
 concurrency:
