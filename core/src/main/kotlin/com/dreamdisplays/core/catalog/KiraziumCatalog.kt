@@ -33,6 +33,12 @@ object KiraziumCatalog {
                     number = 1,
                     episodes = listOf(
                         CatalogEpisode(
+                            number = 1,
+                            title = "Bölüm 1",
+                            videoUrl = "https://r.aniziumserver.site/46260/1/1/1080p.original.mp4",
+                            subtitleUrl = "https://x.anizium.co/api/subtitle/get/file.vtt?id=921466367&name=s1_b1_55263308&season=1&episode=1",
+                        ),
+                        CatalogEpisode(
                             number = 2,
                             title = "Bölüm 2",
                             videoUrl = "https://r.aniziumserver.site/46260/1/2/1080p.original.mp4",
