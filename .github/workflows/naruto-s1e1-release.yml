@@ -4,14 +4,6 @@ name: Kirazium Naruto catalog emergency release
 # the Linux native bundle and both requested loaders in one job, then attaches
 # the verified jars to a draft GitHub release instead of Actions artifact storage.
 on:
-  push:
-    branches:
-      - feature/naruto-catalog
-    paths:
-      - .github/workflows/naruto-s1e1-release.yml
-      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/catalog/AnimeCatalogOverlay.kt
-      - platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/menu/MenuLayout.kt
-      - platform/client/common/src/main/resources/assets/dreamdisplays/textures/gui/catalog/naruto.png
   pull_request:
     branches:
       - main
@@ -24,7 +16,7 @@ on:
 
 concurrency:
   group: kirazium-naruto-s1e1-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -229,6 +221,7 @@ jobs:
           cp "$FABRIC" "$PAPER" release-files/
 
       - name: Create private draft release with verified jars
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
