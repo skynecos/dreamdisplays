@@ -48,7 +48,7 @@ object PaperV2Networking : PluginMessageListener {
     /** The capability snapshot for [player], rebuilt from permissions and config. */
     fun buildServerHello(player: Player): ServerHello = ServerHello(
         isPremium = player.hasPermission(PaperServer.config.permissions.premium),
-        isAdmin = player.hasPermission(PaperServer.config.permissions.delete),
+        isAdmin = player.hasPermission(PaperServer.config.permissions.admin),
         isReportingEnabled = PaperServer.config.settings.webhookUrl.isNotEmpty(),
         allowedFeatures = ServerFeature.playbackFeatureWires + ServerFeature.CATALOG_MEDIA.wire,
         defaultVolume = PaperServer.config.settings.defaultVolume,
