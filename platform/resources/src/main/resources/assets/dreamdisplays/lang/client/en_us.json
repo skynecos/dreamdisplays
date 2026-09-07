@@ -100,5 +100,18 @@
   "dreamdisplays.ui.subtitle_local_only": "These settings only affect your client.",
   "dreamdisplays.button.subtitles": "Subtitles",
   "dreamdisplays.button.subtitle_size": "Text size",
-  "dreamdisplays.button.subtitle_position": "Vertical position"
+  "dreamdisplays.button.subtitle_position": "Vertical position",
+  "dreamdisplays.subtitle.live_preview": "Live preview",
+  "dreamdisplays.subtitle.preview": "Subtitle preview",
+  "dreamdisplays.subtitle.font": "Font",
+  "dreamdisplays.subtitle.font.minecraft": "Minecraft",
+  "dreamdisplays.subtitle.font.uniform": "Uniform",
+  "dreamdisplays.subtitle.text_color": "Text color",
+  "dreamdisplays.subtitle.outline_color": "Outline color",
+  "dreamdisplays.subtitle.background_color": "Background color",
+  "dreamdisplays.subtitle.background_opacity": "Background opacity",
+  "dreamdisplays.subtitle.configure": "Configure",
+  "dreamdisplays.subtitle.reset": "Reset appearance",
+  "dreamdisplays.subtitle.color.off": "Turn off",
+  "dreamdisplays.subtitle.color.disabled": "Off"
 }
