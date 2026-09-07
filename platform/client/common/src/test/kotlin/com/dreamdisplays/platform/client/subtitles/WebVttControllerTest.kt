@@ -20,14 +20,17 @@ class WebVttControllerTest {
     @Test
     fun retriesSameSourceAfterFailure() {
         var loads = 0
-        val controller = WebVttController(UUID.randomUUID()) {
-            loads++
-            if (loads == 1) {
-                CompletableFuture.failedFuture(IllegalStateException("temporary failure"))
-            } else {
-                CompletableFuture.completedFuture(track)
-            }
-        }
+        val controller = WebVttController(
+            UUID.randomUUID(),
+            loader = {
+                loads++
+                if (loads == 1) {
+                    CompletableFuture.failedFuture(IllegalStateException("temporary failure"))
+                } else {
+                    CompletableFuture.completedFuture(track)
+                }
+            },
+        )
 
         controller.setSource("https://example.com/episode-1.vtt")
         assertEquals(emptyList(), controller.activeLines(1_000_000_000L))
@@ -39,12 +42,44 @@ class WebVttControllerTest {
     }
 
     @Test
+    fun automaticallyRecoversFailedSourceAfterBackoff() {
+        var loads = 0
+        var now = 0L
+        val controller = WebVttController(
+            UUID.randomUUID(),
+            loader = {
+                loads++
+                if (loads == 1) {
+                    CompletableFuture.failedFuture(IllegalStateException("temporary failure"))
+                } else {
+                    CompletableFuture.completedFuture(track)
+                }
+            },
+            nanoTime = { now },
+        )
+
+        controller.setSource("https://example.com/episode-1.vtt")
+        assertEquals(1, loads)
+
+        now = 999_999_999L
+        assertEquals(emptyList(), controller.activeLines(1_000_000_000L))
+        assertEquals(1, loads)
+
+        now = 1_000_000_000L
+        assertEquals(listOf("Merhaba"), controller.activeLines(1_000_000_000L))
+        assertEquals(2, loads)
+    }
+
+    @Test
     fun doesNotReloadReadySameSource() {
         var loads = 0
-        val controller = WebVttController(UUID.randomUUID()) {
-            loads++
-            CompletableFuture.completedFuture(track)
-        }
+        val controller = WebVttController(
+            UUID.randomUUID(),
+            loader = {
+                loads++
+                CompletableFuture.completedFuture(track)
+            },
+        )
 
         controller.setSource("https://example.com/episode-1.vtt")
         controller.setSource("https://example.com/episode-1.vtt")
@@ -56,10 +91,13 @@ class WebVttControllerTest {
     fun doesNotDuplicateInFlightSameSource() {
         var loads = 0
         val pending = CompletableFuture<WebVttTrack>()
-        val controller = WebVttController(UUID.randomUUID()) {
-            loads++
-            pending
-        }
+        val controller = WebVttController(
+            UUID.randomUUID(),
+            loader = {
+                loads++
+                pending
+            },
+        )
 
         controller.setSource("https://example.com/episode-1.vtt")
         controller.setSource("https://example.com/episode-1.vtt")
@@ -80,9 +118,12 @@ class WebVttControllerTest {
             Yeni
             """.trimIndent(),
         )
-        val controller = WebVttController(UUID.randomUUID()) { url ->
-            if (url.endsWith("old.vtt")) oldPending else CompletableFuture.completedFuture(newerTrack)
-        }
+        val controller = WebVttController(
+            UUID.randomUUID(),
+            loader = { url ->
+                if (url.endsWith("old.vtt")) oldPending else CompletableFuture.completedFuture(newerTrack)
+            },
+        )
 
         controller.setSource("https://example.com/old.vtt")
         controller.setSource("https://example.com/new.vtt")
