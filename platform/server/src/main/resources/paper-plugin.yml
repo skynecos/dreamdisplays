@@ -16,6 +16,8 @@ dependencies:
       required: false
       join-classpath: true
 permissions:
+  dreamdisplays.admin:
+    default: op
   dreamdisplays.create:
     default: true
   dreamdisplays.video:
