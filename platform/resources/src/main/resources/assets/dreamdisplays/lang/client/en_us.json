@@ -58,7 +58,7 @@
   "dreamdisplays.button.lock.tooltip.1": "Lock display",
   "dreamdisplays.button.lock.tooltip.2": "Only you can change settings",
   "dreamdisplays.button.unlock.tooltip.1": "Unlock display",
-  "dreamdisplays.button.unlock.tooltip.2": "Viewers can watch; only the owner or an admin can change settings",
+  "dreamdisplays.button.unlock.tooltip.2": "Viewers can watch; only an admin can change shared settings",
   "dreamdisplays.button.delete": "Delete",
   "dreamdisplays.button.delete.tooltip.1": "Delete display",
   "dreamdisplays.button.delete.tooltip.2": "Permanently removes this display",

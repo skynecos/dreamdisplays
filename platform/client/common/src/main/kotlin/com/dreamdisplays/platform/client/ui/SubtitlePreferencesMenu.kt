@@ -8,7 +8,9 @@ import com.dreamdisplays.platform.client.ui.kit.UiWidget
 import com.dreamdisplays.platform.client.ui.kit.drawPanel
 import com.dreamdisplays.platform.client.ui.widgets.ModeSlider
 import com.dreamdisplays.platform.client.ui.widgets.ValueSlider
+import com.dreamdisplays.platform.client.utils.MinecraftScreenUtil
 import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.screens.Screen
 import net.minecraft.network.chat.Component
 import kotlin.math.roundToInt
 
@@ -18,6 +20,7 @@ import kotlin.math.roundToInt
  */
 class SubtitlePreferencesMenu(
     private val displayScreen: DisplayScreen,
+    private val parent: Screen? = null,
 ) : UiScreenBase(Component.translatable("dreamdisplays.ui.subtitle_preferences")) {
     private lateinit var enabled: ModeSlider<Boolean>
     private lateinit var size: ValueSlider
@@ -109,6 +112,10 @@ class SubtitlePreferencesMenu(
     override fun minContentSize(): Pair<Int, Int> = MIN_W to MIN_H
 
     override fun isPauseScreen(): Boolean = false
+
+    override fun onClose() {
+        MinecraftScreenUtil.setScreen(Minecraft.getInstance(), parent)
+    }
 
     companion object {
         private const val PANEL_W = 400

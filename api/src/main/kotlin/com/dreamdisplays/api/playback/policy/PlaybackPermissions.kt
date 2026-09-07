@@ -18,9 +18,9 @@ object PlaybackPermissions {
     /**
      * Whether this player may open the display-management UI or mutate shared display state.
      *
-     * Lock state is deliberately ignored: an unlocked display is viewable, not publicly editable.
+     * Lock state is deliberately ignored: an unlocked display is viewable, not publicly editable. Ownership alone never grants management.
      */
-    fun canManageDisplay(c: PlaybackContext): Boolean = c.isOwner || c.isAdmin
+    fun canManageDisplay(c: PlaybackContext): Boolean = c.isAdmin
 
     /** Play / pause the shared timeline. Viewers are always read-only. */
     fun canPlayPause(c: PlaybackContext): Boolean = when (c.mode) {
@@ -54,7 +54,7 @@ object PlaybackPermissions {
     fun canPopout(c: PlaybackContext): Boolean =
         c.mode != BROADCAST
 
-    /** Start a watch party. Shared-session creation is owner / admin only. */
+    /** Start a watch party. Shared-session creation is admin-only. */
     fun canStartWatchParty(c: PlaybackContext): Boolean =
         !c.hasActiveParty && canManageDisplay(c)
 
@@ -62,7 +62,7 @@ object PlaybackPermissions {
     fun canControlWatchParty(c: PlaybackContext): Boolean =
         canManageDisplay(c) && c.isPartyHost
 
-    /** Close a session and free the display. Owner or admin may recover a dead-host session. */
+    /** Close a session and free the display. An admin may recover a dead-host session. */
     fun canCloseWatchParty(c: PlaybackContext): Boolean =
         canManageDisplay(c)
 

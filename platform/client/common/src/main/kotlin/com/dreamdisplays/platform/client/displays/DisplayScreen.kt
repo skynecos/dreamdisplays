@@ -132,7 +132,7 @@ class DisplayScreen(
     /** True while a media error is active. */
     val errored: Boolean get() = mediaError != null
 
-    /** True if the local player may open management or mutate shared display state. */
+    /** True if the local player is an admin and may open management or mutate shared display state. */
     val canManageDisplay: Boolean get() = PlaybackPermissions.canManageDisplay(ctx())
 
     /** Compatibility alias used by existing owner-only UI state. */
@@ -171,7 +171,7 @@ class DisplayScreen(
         isPartyHost = watchParty?.isHost == true,
     )
 
-    /** True if the local player may play/pause here. Locked displays allow only owner / admin controls. */
+    /** True if the local player may play/pause here. Shared controls are admin-only. */
     val canControlPlayback: Boolean get() = PlaybackPermissions.canPlayPause(ctx())
 
     /** True if the local player may seek here. */

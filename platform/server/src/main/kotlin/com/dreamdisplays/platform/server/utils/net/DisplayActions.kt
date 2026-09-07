@@ -59,14 +59,12 @@ object DisplayActions {
     private val requestSyncThrottle = ActionThrottle()
     private const val REQUEST_SYNC_COOLDOWN_MS = 250L
 
-    /** Handles a client-requested deletion, enforcing owner-or-permission check and physical proximity. */
+    /** Handles a client-requested deletion, enforcing the administrative delete permission and physical proximity. */
     fun delete(player: Player, displayId: UUID) {
         val displayData = DisplayManager.getDisplayData(displayId)
             ?: return MessageUtil.sendMessage(player, "noDisplay")
 
-        val isOwner = displayData.ownerId == player.uniqueId
-        val canDelete = isOwner || player.hasPermission(PaperServer.config.permissions.deleteOthers)
-        if (!canDelete) {
+        if (!player.hasPermission(PaperServer.config.permissions.deleteOthers)) {
             MessageUtil.sendMessage(player, "displayCommandMissingPermission")
             return
         }
