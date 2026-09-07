@@ -26,7 +26,7 @@ object CatalogMediaActions {
         val context = PlaybackContexts.of(
             display,
             player.uniqueId,
-            player.hasPermission(PaperServer.config.permissions.delete),
+            player.hasPermission(PaperServer.config.permissions.admin),
         )
         if (!PlaybackPermissions.canSetVideo(context)) return
 
