@@ -275,9 +275,9 @@ object VanillaDisplayActions {
         return VanillaPermissions.has(player, node, VanillaPermissions.Fallback.EVERYONE)
     }
 
-    /** True if [player] counts as a display admin (the `delete` node, or op level 2 without LuckPerms). */
+    /** True if [player] counts as a display admin (dedicated admin node, or op level 2 without LuckPerms). */
     fun isAdmin(player: ServerPlayer): Boolean =
-        VanillaPermissions.has(player, VanillaServerState.config.permissions.delete, VanillaPermissions.Fallback.OP)
+        VanillaPermissions.has(player, VanillaServerState.config.permissions.admin, VanillaPermissions.Fallback.OP)
 
     /** True if [player] holds the premium node (op level 2 without LuckPerms, matching legacy behavior). */
     fun isPremium(player: ServerPlayer): Boolean =
