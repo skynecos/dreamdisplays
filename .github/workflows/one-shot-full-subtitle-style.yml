@@ -29,7 +29,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6.1.0
 
       - name: Apply guarded patch
-        run: python3 .github/scripts/apply_full_personal_subtitle_style.py
+        run: |
+          python3 .github/scripts/apply_full_personal_subtitle_style.py
+          python3 .github/scripts/fix_full_personal_subtitle_patch.py
 
       - name: Validate patch formatting
         run: git diff --check
