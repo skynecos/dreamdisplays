@@ -157,6 +157,8 @@ data class PermissionsSection(
     val video get() = permissions.video
     val info get() = permissions.info
     val premium get() = permissions.premium
+    /** Dedicated authority gate for shared display management. Never derived from owner/delete permissions. */
+    val admin get() = "dreamdisplays.admin"
     val delete get() = permissions.delete
     val list get() = permissions.list
     val reload get() = permissions.reload
