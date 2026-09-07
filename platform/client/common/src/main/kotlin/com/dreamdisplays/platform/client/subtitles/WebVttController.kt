@@ -46,7 +46,17 @@ private object WebVttLoader {
 }
 
 /** Per-display asynchronous subtitle state backed by an immutable parsed track. */
-internal class WebVttController(private val displayId: UUID) {
+internal class WebVttController(
+    private val displayId: UUID,
+    private val loader: (String) -> CompletableFuture<WebVttTrack> = WebVttLoader::load,
+) {
+    private enum class LoadState {
+        IDLE,
+        LOADING,
+        READY,
+        FAILED,
+    }
+
     private val logger = LoggerFactory.getLogger("DreamDisplays/WebVTT")
     private val generation = AtomicLong()
 
@@ -56,23 +66,42 @@ internal class WebVttController(private val displayId: UUID) {
     @Volatile
     private var track: WebVttTrack? = null
 
-    /** Changes the source, invalidating the old track immediately and loading the new one asynchronously. */
+    @Volatile
+    private var state = LoadState.IDLE
+
+    /**
+     * Changes or refreshes the source. A READY/LOADING source is deduplicated, while a FAILED
+     * source is allowed to retry when the server or catalog sends the same URL again.
+     */
     fun setSource(url: String) {
         val normalized = url.trim()
-        if (normalized == source) return
-        source = normalized
-        track = null
-        val token = generation.incrementAndGet()
-        if (normalized.isEmpty()) return
+        val sameSource = normalized == source
+        if (sameSource && (state == LoadState.READY || state == LoadState.LOADING)) return
 
-        WebVttLoader.load(normalized).whenComplete { loaded, error ->
+        if (!sameSource) {
+            source = normalized
+            track = null
+        }
+
+        val token = generation.incrementAndGet()
+        if (normalized.isEmpty()) {
+            track = null
+            state = LoadState.IDLE
+            return
+        }
+
+        state = LoadState.LOADING
+        loader(normalized).whenComplete { loaded, error ->
             if (generation.get() != token || source != normalized) return@whenComplete
             if (error != null) {
+                track = null
+                state = LoadState.FAILED
                 val cause = error.cause ?: error
                 logger.warn("$displayId could not load WebVTT: ${cause.javaClass.simpleName}: ${cause.message}")
                 return@whenComplete
             }
             track = loaded
+            state = LoadState.READY
             logger.info("$displayId loaded WebVTT (${loaded.cueCount} cues).")
         }
     }
@@ -85,5 +114,6 @@ internal class WebVttController(private val displayId: UUID) {
         generation.incrementAndGet()
         source = ""
         track = null
+        state = LoadState.IDLE
     }
 }
