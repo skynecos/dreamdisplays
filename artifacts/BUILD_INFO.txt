@@ -1,0 +1,6 @@
+source_commit=3340c8daff1785d41321c01a0a79ccf9f088bedc
+native_target=windows-x64
+minecraft=26.1.2
+catalog_episodes=1,2
+native_abi=1
+lav_abi=5
