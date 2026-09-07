@@ -187,13 +187,13 @@ object DisplayActions {
 
     /** Builds the permission context for [player] acting on [display]. */
     private fun context(display: PaperDisplayData, player: Player) =
-        PlaybackContexts.of(display, player.uniqueId, player.hasPermission(PaperServer.config.permissions.delete))
+        PlaybackContexts.of(display, player.uniqueId, player.hasPermission(PaperServer.config.permissions.admin))
 
     /** Like [context] but elevates [player] to admin if they hold the [lock][PermissionsSection.lock] permission. */
     private fun lockContext(display: PaperDisplayData, player: Player) =
         PlaybackContexts.of(
             display, player.uniqueId,
-            player.hasPermission(PaperServer.config.permissions.delete) || player.hasPermission(PaperServer.config.permissions.lock)
+            player.hasPermission(PaperServer.config.permissions.admin) || player.hasPermission(PaperServer.config.permissions.lock)
         )
 
     /** Checks if [player] has permission to access the specified [mode]. */
