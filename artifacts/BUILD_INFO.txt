@@ -1,0 +1,3 @@
+source_commit=97b96295c17bcf2f15fbd37bb5ecf3ce8ba249c3
+source_branch=codex/android10-subtitles
+workflow=subtitle-stable-plus-android
