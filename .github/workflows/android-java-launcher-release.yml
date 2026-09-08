@@ -56,11 +56,32 @@ jobs:
           rm -rf quota-safe-release
           mkdir -p quota-safe-release
 
+          build_with_retry() {
+            local mc="$1"
+            local attempt
+            for attempt in 1 2 3 4; do
+              echo "Building Fabric ${mc} (attempt ${attempt}/4)"
+              if [[ "$attempt" -eq 1 ]]; then
+                if ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel --stacktrace; then
+                  return 0
+                fi
+              else
+                if ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel --stacktrace --refresh-dependencies; then
+                  return 0
+                fi
+              fi
+              if [[ "$attempt" -lt 4 ]]; then
+                sleep $((attempt * 15))
+              fi
+            done
+            echo "Fabric ${mc} still failed after 4 attempts." >&2
+            return 1
+          }
+
           for mc in 1.21.1 1.21.11 26.1.2 26.2; do
             test -d "versions/$mc"
             printf '%s' "$mc" > versions/active.txt
-            echo "Building Fabric $mc"
-            ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel
+            build_with_retry "$mc"
           done
 
           find build/libs -maxdepth 1 -type f -name 'dreamdisplays-fabric-*.jar' -print -exec cp {} quota-safe-release/ \;
