@@ -43,6 +43,10 @@ fun scVersion(name: String): String = scVersions.get(name)
 // Legacy (obfuscated) Minecraft targets need layered Mojang+Parchment mappings and modImplementation;
 // year-versioned (deobfuscated) targets resolve the source set directly with plain implementation.
 val isLegacyObfuscated = scVersion("minecraft.version").startsWith("1.")
+// Parchment augments Mojang mappings with parameter names/Javadocs only. The quota-safe release
+// workflow may disable this optional layer so an outage of the external Parchment Maven cannot
+// block production jars; runtime names and remapping remain based on the official Mojang mappings.
+val skipOptionalParchment = System.getenv("DREAMDISPLAYS_SKIP_PARCHMENT")?.equals("true", ignoreCase = true) == true
 
 fun fancyModLoaderVersion(neoForgeVersion: String): String = when (neoForgeVersion) {
     "21.1.233" -> "4.0.42"
@@ -126,10 +130,12 @@ dependencies {
             officialMojangMappings()
             // Older legacy targets (1.21.1) predate the io.papermc.parchment.data coordinates and
             // ship under org.parchmentmc.data; allow the version to override the default artifact.
-            parchment(
-                scVersions.getOrNull("parchment.dependency")
-                    ?: "io.papermc.parchment.data:parchment:${scVersion("minecraft.version")}+build.3"
-            )
+            if (!skipOptionalParchment) {
+                parchment(
+                    scVersions.getOrNull("parchment.dependency")
+                        ?: "io.papermc.parchment.data:parchment:${scVersion("minecraft.version")}+build.3"
+                )
+            }
         })
         "modImplementation"("net.fabricmc:fabric-loader:${scVersion("fabric.loader.version")}")
         "modImplementation"("net.fabricmc.fabric-api:fabric-api:${scVersion("fabric.api.version")}")

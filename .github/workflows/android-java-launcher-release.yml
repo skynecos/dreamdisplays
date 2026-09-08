@@ -50,6 +50,9 @@ jobs:
 
       - name: Build all configured Fabric versions
         env:
+          # Parchment only adds source parameter names/Javadocs. Official Mojang mappings produce
+          # the same runtime names and keep this release independent of Parchment Maven outages.
+          DREAMDISPLAYS_SKIP_PARCHMENT: "true"
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
         run: |
           set -euo pipefail
@@ -66,7 +69,7 @@ jobs:
                   return 0
                 fi
               else
-                if ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel --stacktrace --refresh-dependencies; then
+                if ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel --stacktrace; then
                   return 0
                 fi
               fi
