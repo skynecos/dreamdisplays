@@ -1,0 +1,283 @@
+name: Kirazium Android10 Subtitles
+
+on:
+  push:
+    branches:
+      - codex/android10-subtitles
+    paths:
+      - ".github/workflows/kirazium-android10-subtitles.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FFMPEG_PLUGIN_COMMIT: "5422b575f2402810ba9bfdc07c3f78bab98a15a2"
+  FFMPEG_KIT_COMMIT: "97760a31349439243487a99adbcde09e9dabe458"
+  ANDROID_NDK_VERSION: "25.1.8937393"
+  LAUNCHER_BRANCH: "codex/dreamdisplays-ffmpeg"
+
+jobs:
+  build-fabric-26-1-2:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: Checkout stable subtitle source
+        uses: actions/checkout@v4
+
+      - name: Fetch Android patch/build tools
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$LAUNCHER_BRANCH" \
+            https://github.com/skynecos/KiraziumLauncher.git \
+            "$RUNNER_TEMP/KiraziumLauncher"
+
+      - name: Set up JDK 17 for helper APK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install Android/native build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            autogen autoconf automake autopoint build-essential clang cmake gettext \
+            gperf groff gtk-doc-tools libclang-dev libtasn1-bin libtool libtool-bin \
+            nasm pkg-config yasm
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$SDK_ROOT" ]; then
+            echo "::error::Android SDK is unavailable on the runner."
+            exit 1
+          fi
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -perm -u+x | head -n 1 || true)"
+          fi
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager was not found under $SDK_ROOT/cmdline-tools."
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" \
+            "ndk;${ANDROID_NDK_VERSION}" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned MediaCodec FFmpeg helper sources
+        run: |
+          set -euo pipefail
+          PLUGIN_DIR="$RUNNER_TEMP/FFmpegPlugin"
+          git init "$PLUGIN_DIR"
+          git -C "$PLUGIN_DIR" remote add origin https://github.com/MojoLauncher/FFmpegPlugin.git
+          git -C "$PLUGIN_DIR" fetch --depth 1 origin "$FFMPEG_PLUGIN_COMMIT"
+          git -C "$PLUGIN_DIR" checkout --detach FETCH_HEAD
+
+          git init "$PLUGIN_DIR/ffmpeg-kit"
+          git -C "$PLUGIN_DIR/ffmpeg-kit" remote add origin https://github.com/arthenica/ffmpeg-kit.git
+          git -C "$PLUGIN_DIR/ffmpeg-kit" fetch --depth 1 origin "$FFMPEG_KIT_COMMIT"
+          git -C "$PLUGIN_DIR/ffmpeg-kit" checkout --detach FETCH_HEAD
+          git -C "$PLUGIN_DIR/ffmpeg-kit" apply "$PLUGIN_DIR/scripts/ffmpeg_enable_executable.diff"
+
+      - name: Build MediaCodec HTTPS FFmpeg helper
+        run: |
+          set -euo pipefail
+          LAUNCHER="$RUNNER_TEMP/KiraziumLauncher"
+          chmod +x "$LAUNCHER/tools/dreamdisplays-ffmpeg/build-test-apk.sh"
+          "$LAUNCHER/tools/dreamdisplays-ffmpeg/build-test-apk.sh" "$RUNNER_TEMP/FFmpegPlugin"
+
+          FFROOT="$RUNNER_TEMP/FFmpegPlugin/ffmpeg-kit/prebuilt/android-arm64/ffmpeg"
+          test -s "$FFROOT/lib/libavcodec.so"
+          test -s "$FFROOT/lib/libavformat.so"
+          test -d "$FFROOT/include"
+          strings "$FFROOT/lib/libavcodec.so" | grep -F -- '--enable-mediacodec' >/dev/null
+          strings "$FFROOT/lib/libavcodec.so" | grep -F -- '--enable-jni' >/dev/null
+          readelf -Ws "$FFROOT/lib/libavcodec.so" | grep -F 'av_jni_set_java_vm' >/dev/null
+          strings "$FFROOT/lib/libavcodec.so" | grep -F 'h264_mediacodec' >/dev/null
+          strings "$FFROOT/lib/libavcodec.so" | grep -F 'hevc_mediacodec' >/dev/null
+
+      - name: Set up JDK 25 for Dream Displays
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Layer Android fixes over stable subtitle branch
+        run: |
+          set -euo pipefail
+          LAUNCHER="$RUNNER_TEMP/KiraziumLauncher"
+
+          # The Android patch chain was authored against 1.9.5/26.1.2.
+          printf '26.1.2\n' > versions/active.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('gradle.properties')
+          text = p.read_text()
+          lines = text.splitlines()
+          lines = [('version=1.9.5' if line.startswith('version=') else line) for line in lines]
+          p.write_text('\n'.join(lines) + '\n')
+          PY
+
+          for patch in apply-patches.py apply-android4.py apply-android5.py apply-android6.py apply-android7.py apply-android8.py apply-android9.py; do
+            cp "$LAUNCHER/tools/dreamdisplays-android/$patch" "./$patch"
+            python3 "./$patch"
+          done
+
+          # Never route this CI through Parchment; it caused the previous false-red builds.
+          python3 - <<'PY'
+          from pathlib import Path
+          needle = '        maven("https://maven.parchmentmc.org")\n'
+          needle4 = '    maven("https://maven.parchmentmc.org")\n'
+          for p in Path('.').rglob('*.gradle.kts'):
+              text = p.read_text()
+              new = text.replace(needle, '').replace(needle4, '')
+              if new != text:
+                  p.write_text(new)
+          PY
+
+          # Unique version so this build can never be confused with vtt.1/vtt.2/android9.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('gradle.properties')
+          lines = p.read_text().splitlines()
+          lines = [('version=1.9.5-kirazium-android10-subtitles' if line.startswith('version=') else line) for line in lines]
+          p.write_text('\n'.join(lines) + '\n')
+          PY
+
+      - name: Build Android ARM64 native and in-process MediaCodec LAV
+        run: |
+          set -euo pipefail
+          NDK_ROOT="$ANDROID_NDK_ROOT"
+          TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SYSROOT="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          test -x "$TOOLCHAIN/aarch64-linux-android24-clang"
+
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android
+
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/aarch64-linux-android24-clang"
+          export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang"
+          export CXX_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang++"
+          export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
+
+          FFROOT="$RUNNER_TEMP/FFmpegPlugin/ffmpeg-kit/prebuilt/android-arm64/ffmpeg"
+          export FFMPEG_DIR="$FFROOT"
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_PATH="$FFROOT/lib/pkgconfig"
+          export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android24 --sysroot=$SYSROOT -I$FFROOT/include"
+          export LIBCLANG_PATH="$(dirname "$(find /usr/lib/llvm-* -name libclang.so -o -name 'libclang.so.*' | head -n 1)")"
+
+          cd native
+          cargo build --locked --release --target aarch64-linux-android -p dreamdisplays-native
+          cargo build --locked --release --target aarch64-linux-android -p dreamdisplays-lav
+
+          BUNDLE="build/ci-bundle/dreamdisplays-natives/linux-aarch64"
+          mkdir -p "$BUNDLE"
+          cp target/aarch64-linux-android/release/libdreamdisplays_native.so "$BUNDLE/libdreamdisplays_native.so"
+          cp target/aarch64-linux-android/release/libdreamdisplays_lav.so "$BUNDLE/libdreamdisplays_lav.so"
+
+          test -s "$BUNDLE/libdreamdisplays_native.so"
+          test -s "$BUNDLE/libdreamdisplays_lav.so"
+          "$TOOLCHAIN/llvm-readelf" -h "$BUNDLE/libdreamdisplays_lav.so" | grep -F 'AArch64' >/dev/null
+          "$TOOLCHAIN/llvm-readelf" -Ws "$BUNDLE/libdreamdisplays_lav.so" | grep -F 'JNI_OnLoad' >/dev/null
+          "$TOOLCHAIN/llvm-readelf" -d "$BUNDLE/libdreamdisplays_lav.so" | grep -F 'libavcodec.so' >/dev/null
+          "$TOOLCHAIN/llvm-readelf" -d "$BUNDLE/libdreamdisplays_lav.so" | grep -F 'libavformat.so' >/dev/null
+
+      - name: Preflight Android plus subtitle regression guards
+        run: |
+          set -euo pipefail
+          test "$(cat versions/active.txt)" = "26.1.2"
+          test -s native/build/ci-bundle/dreamdisplays-natives/linux-aarch64/libdreamdisplays_native.so
+          test -s native/build/ci-bundle/dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so
+
+          # Android pipeline guards.
+          grep -Fq 'MEDIACODEC("mediacodec", null, 6)' media/player/src/main/kotlin/com/dreamdisplays/media/player/process/HwAccelBackend.kt
+          grep -Fq 'System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true -> NONE' media/player/src/main/kotlin/com/dreamdisplays/media/player/process/HwAccelBackend.kt
+          grep -q 'return HwAccelBackend.MEDIACODEC.lavCode' media/player/src/main/kotlin/com/dreamdisplays/media/player/pipeline/NativeVideoFramePipe.kt
+          grep -q 'provisionAndroidHelperLibraries' media/player/src/main/kotlin/com/dreamdisplays/media/player/nativebridge/LavFfmpeg.kt
+          grep -q 'System.load(lib.absolutePath)' media/player/src/main/kotlin/com/dreamdisplays/media/player/nativebridge/NativeMedia.kt
+          grep -q 'JNI_OnLoad' native/lav/src/lib.rs
+          grep -q 'h264_mediacodec' native/lav/src/session.rs
+          grep -q 'HwAccelRequest::MediaCodec' native/lav/src/session.rs
+
+          # Subtitle/VTT regression guards. CI MUST fail instead of shipping another half-build.
+          MENU='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/DisplayMenu.kt'
+          grep -q 'SubtitlePreferences' "$MENU"
+          grep -q 'showSubtitleSettingsModal' "$MENU"
+          grep -q 'Personal subtitle settings' "$MENU"
+          grep -q 'getSubtitleVerticalPosition' "$MENU"
+          grep -Rqi 'webvtt\|WebVTT' media platform/client/common docs
+          grep -Rq 'subtitleVerticalPosition\|subtitle.verticalPosition' platform/client/common
+          grep -q 'version=1.9.5-kirazium-android10-subtitles' gradle.properties
+
+      - name: Build Fabric 26.1.2 Android10 subtitles mod
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :platform:client:fabric:publishJar \
+            -Pdreamdisplays.autoBuildNatives=false \
+            --no-daemon \
+            --stacktrace
+
+      - name: Collect and verify final bundle
+        run: |
+          set -euo pipefail
+          JAR="build/libs/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android10-subtitles.jar"
+          APK="$RUNNER_TEMP/FFmpegPlugin/app/build/outputs/apk/debug/app-debug.apk"
+          mkdir -p out verify-jar
+
+          if [[ ! -s "$JAR" ]]; then
+            echo "::error::Expected Android10 subtitle JAR not found. Available outputs:"
+            find build/libs -maxdepth 1 -type f -name '*.jar' -print || true
+            exit 1
+          fi
+          test -s "$APK"
+
+          jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_native.so' >/dev/null
+          jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so' >/dev/null
+          jar tf "$JAR" | grep -F 'DisplayMenu' >/dev/null
+
+          unzip -p "$JAR" dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so > verify-jar/libdreamdisplays_lav.so
+          readelf -Ws verify-jar/libdreamdisplays_lav.so | grep -F 'JNI_OnLoad' >/dev/null
+          readelf -d verify-jar/libdreamdisplays_lav.so | grep -F 'libavcodec.so' >/dev/null
+
+          unzip -p "$APK" lib/arm64-v8a/libavcodec.so > verify-jar/libavcodec.so
+          strings verify-jar/libavcodec.so | grep -F -- '--enable-mediacodec' >/dev/null
+          readelf -Ws verify-jar/libavcodec.so | grep -F 'av_jni_set_java_vm' >/dev/null
+
+          cp "$JAR" out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android10-subtitles.jar
+          cp "$APK" out/Kirazium-DreamDisplays-FFmpeg-MediaCodec-arm64.apk
+          sha256sum out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android10-subtitles.jar > out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android10-subtitles.jar.sha256
+          sha256sum out/Kirazium-DreamDisplays-FFmpeg-MediaCodec-arm64.apk > out/Kirazium-DreamDisplays-FFmpeg-MediaCodec-arm64.apk.sha256
+
+      - name: Publish verified bundle to quota-safe branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          staged="$RUNNER_TEMP/android10-subtitles-stage"
+          output="$RUNNER_TEMP/android10-subtitles-output"
+          mkdir -p "$staged"
+          cp out/* "$staged/"
+
+          git worktree add --detach "$output" "$GITHUB_SHA"
+          cd "$output"
+          git switch --orphan android10-subtitles-build
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p artifacts
+          cp "$staged"/* artifacts/
+          printf 'source_commit=%s\nsource_branch=codex/android10-subtitles\nworkflow=subtitle-stable-plus-android\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          git add artifacts
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "build: verified Android10 subtitle bundle"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:refs/heads/android10-subtitles-build
