@@ -1,0 +1,114 @@
+name: Android Java launcher quota-safe build
+
+on:
+  push:
+    branches:
+      - fix/android-java-launcher-support
+  workflow_dispatch:
+
+concurrency:
+  group: android-java-launcher-quota-safe
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build and publish Android Java launcher jars without Actions artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Android compatibility branch
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 1
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6.1.0
+
+      - name: Setup JDK 25
+        uses: actions/setup-java@v5.2.0
+        with:
+          java-version: 25
+          distribution: temurin
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.1.0
+        with:
+          cache-read-only: true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build core tests
+        run: |
+          set -euo pipefail
+          echo "1.21.11" > versions/active.txt
+          ./gradlew :core:test --no-daemon
+
+      - name: Build Android-targeted Fabric jars
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
+        run: |
+          set -euo pipefail
+          rm -rf quota-safe-release
+          mkdir -p quota-safe-release
+
+          for mc in 1.21.1 1.21.4 1.21.5 1.21.8 1.21.10 1.21.11 26.1.2 26.2; do
+            if grep -qx "$mc" versions/*.txt 2>/dev/null; then
+              echo "$mc" > versions/active.txt
+              ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel
+            fi
+          done
+
+          find build/libs -maxdepth 1 -type f -name 'dreamdisplays-fabric-*.jar' -print -exec cp {} quota-safe-release/ \;
+          test -n "$(find quota-safe-release -maxdepth 1 -type f -name '*.jar' -print -quit)"
+
+      - name: Verify jars
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          jars = sorted(Path('quota-safe-release').glob('*.jar'))
+          if not jars:
+              raise SystemExit('No Fabric jars were produced')
+
+          for jar in jars:
+              if jar.stat().st_size == 0:
+                  raise SystemExit(f'Empty jar: {jar}')
+              with ZipFile(jar) as zf:
+                  names = set(zf.namelist())
+                  if not any(name.endswith('fabric.mod.json') for name in names):
+                      raise SystemExit(f'Not a Fabric mod jar: {jar}')
+              print(hashlib.sha256(jar.read_bytes()).hexdigest(), jar.name)
+
+          with open('quota-safe-release/SHA256SUMS.txt', 'w', encoding='utf-8') as out:
+              for jar in jars:
+                  out.write(f"{hashlib.sha256(jar.read_bytes()).hexdigest()}  {jar.name}\n")
+          PY
+
+      - name: Publish verified jars to quota-safe branch
+        run: |
+          set -euo pipefail
+          staged="${RUNNER_TEMP}/android-java-launcher-jars"
+          output="${RUNNER_TEMP}/android-java-launcher-output"
+          mkdir -p "$staged"
+          cp quota-safe-release/* "$staged/"
+
+          git worktree add --detach "$output" "$GITHUB_SHA"
+          cd "$output"
+          git switch --orphan android-java-launcher-build
+          rm -rf ./* .github 2>/dev/null || true
+          mkdir -p artifacts
+          cp "$staged"/* artifacts/
+          printf 'source_commit=%s\nworkflow=quota-safe\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          git add artifacts
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "build(android): verified Java launcher jars"
+          git push --force origin HEAD:refs/heads/android-java-launcher-build
