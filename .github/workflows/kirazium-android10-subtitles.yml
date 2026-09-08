@@ -207,14 +207,25 @@ jobs:
           grep -q 'h264_mediacodec' native/lav/src/session.rs
           grep -q 'HwAccelRequest::MediaCodec' native/lav/src/session.rs
 
-          # Subtitle/VTT regression guards. CI MUST fail instead of shipping another half-build.
+          # Subtitle/VTT regression guards. These match the current stable full-screen preferences UI.
           MENU='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/DisplayMenu.kt'
-          grep -q 'SubtitlePreferences' "$MENU"
-          grep -q 'showSubtitleSettingsModal' "$MENU"
-          grep -q 'Personal subtitle settings' "$MENU"
-          grep -q 'getSubtitleVerticalPosition' "$MENU"
-          grep -Rqi 'webvtt\|WebVTT' media platform/client/common docs
-          grep -Rq 'subtitleVerticalPosition\|subtitle.verticalPosition' platform/client/common
+          PREF='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/SubtitlePreferencesMenu.kt'
+          VTT='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/subtitles/WebVttController.kt'
+          COLOR='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/SubtitleColorPickerScreen.kt'
+          test -s "$PREF"
+          test -s "$VTT"
+          test -s "$COLOR"
+          grep -Fq 'SubtitlePreferencesMenu(ds, this)' "$MENU"
+          grep -Fq 'class SubtitlePreferencesMenu' "$PREF"
+          grep -Fq 'displayScreen.subtitlesEnabled' "$PREF"
+          grep -Fq 'displayScreen.subtitleScale' "$PREF"
+          grep -Fq 'displayScreen.subtitleVerticalPosition' "$PREF"
+          grep -Fq 'subtitleBackgroundOpacity' "$PREF"
+          grep -Fq 'subtitleFont' "$PREF"
+          grep -Fq 'subtitleTextColor' "$PREF"
+          grep -Fq 'subtitleOutlineColor' "$PREF"
+          grep -Fq 'subtitleBackgroundColor' "$PREF"
+          grep -Fq 'class WebVttController' "$VTT"
           grep -q 'version=1.9.5-kirazium-android10-subtitles' gradle.properties
 
       - name: Build Fabric 26.1.2 Android10 subtitles mod
@@ -243,6 +254,8 @@ jobs:
           jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_native.so' >/dev/null
           jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so' >/dev/null
           jar tf "$JAR" | grep -F 'DisplayMenu' >/dev/null
+          jar tf "$JAR" | grep -F 'SubtitlePreferencesMenu' >/dev/null
+          jar tf "$JAR" | grep -F 'WebVttController' >/dev/null
 
           unzip -p "$JAR" dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so > verify-jar/libdreamdisplays_lav.so
           readelf -Ws verify-jar/libdreamdisplays_lav.so | grep -F 'JNI_OnLoad' >/dev/null
