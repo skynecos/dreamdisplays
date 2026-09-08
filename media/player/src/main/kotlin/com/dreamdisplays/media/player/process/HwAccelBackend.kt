@@ -29,8 +29,13 @@ enum class HwAccelBackend(val ffmpegName: String?, val hwOutputFormat: String?, 
          * Picks a sensible default backend for the host OS. We deliberately pick the most broadly
          * compatible option per-platform rather than the absolute fastest: a stream that fails to
          * decode is worse than a stream that decodes a bit slower.
+         *
+         * Android Java launchers expose a Linux kernel but do not provide a desktop VAAPI device.
+         * They must stay on software decode/the portable RGB process path unless a dedicated Android
+         * backend is introduced later.
          */
         fun detectDefault(): HwAccelBackend = when {
+            OsInfo.isAndroidLike -> NONE
             OsInfo.isMac -> VIDEOTOOLBOX
             OsInfo.isWindows -> D3D11VA
             OsInfo.isLinux -> VAAPI
