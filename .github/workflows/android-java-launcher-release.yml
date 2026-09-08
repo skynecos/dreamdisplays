@@ -42,13 +42,13 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
-      - name: Build core tests
+      - name: Run core tests
         run: |
           set -euo pipefail
-          echo "1.21.11" > versions/active.txt
+          printf '%s' '1.21.11' > versions/active.txt
           ./gradlew :core:test --no-daemon
 
-      - name: Build Android-targeted Fabric jars
+      - name: Build all configured Fabric versions
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
         run: |
@@ -56,11 +56,11 @@ jobs:
           rm -rf quota-safe-release
           mkdir -p quota-safe-release
 
-          for mc in 1.21.1 1.21.4 1.21.5 1.21.8 1.21.10 1.21.11 26.1.2 26.2; do
-            if grep -qx "$mc" versions/*.txt 2>/dev/null; then
-              echo "$mc" > versions/active.txt
-              ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel
-            fi
+          for mc in 1.21.1 1.21.11 26.1.2 26.2; do
+            test -d "versions/$mc"
+            printf '%s' "$mc" > versions/active.txt
+            echo "Building Fabric $mc"
+            ./gradlew :platform:client:fabric:publishJar --no-daemon --parallel
           done
 
           find build/libs -maxdepth 1 -type f -name 'dreamdisplays-fabric-*.jar' -print -exec cp {} quota-safe-release/ \;
@@ -75,17 +75,21 @@ jobs:
           from zipfile import ZipFile
 
           jars = sorted(Path('quota-safe-release').glob('*.jar'))
-          if not jars:
-              raise SystemExit('No Fabric jars were produced')
+          if len(jars) < 4:
+              raise SystemExit(f'Expected at least 4 Fabric jars, found {len(jars)}')
+
+          expected_versions = ('1.21.1', '1.21.11', '26.1.2', '26.2')
+          names = [jar.name for jar in jars]
+          for version in expected_versions:
+              if not any(f'-{version}-' in name for name in names):
+                  raise SystemExit(f'Missing Fabric build for {version}: {names}')
 
           for jar in jars:
               if jar.stat().st_size == 0:
                   raise SystemExit(f'Empty jar: {jar}')
               with ZipFile(jar) as zf:
-                  names = set(zf.namelist())
-                  if not any(name.endswith('fabric.mod.json') for name in names):
+                  if 'fabric.mod.json' not in set(zf.namelist()):
                       raise SystemExit(f'Not a Fabric mod jar: {jar}')
-              print(hashlib.sha256(jar.read_bytes()).hexdigest(), jar.name)
 
           with open('quota-safe-release/SHA256SUMS.txt', 'w', encoding='utf-8') as out:
               for jar in jars:
@@ -103,10 +107,10 @@ jobs:
           git worktree add --detach "$output" "$GITHUB_SHA"
           cd "$output"
           git switch --orphan android-java-launcher-build
-          rm -rf ./* .github 2>/dev/null || true
+          git rm -rf . >/dev/null 2>&1 || true
           mkdir -p artifacts
           cp "$staged"/* artifacts/
-          printf 'source_commit=%s\nworkflow=quota-safe\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          printf 'source_commit=%s\nworkflow=quota-safe\nversions=1.21.1,1.21.11,26.1.2,26.2\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
           git add artifacts
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
