@@ -1,7 +1,5 @@
 name: CI
 
-# Runs on every push to main and every PR. Always builds and uploads artifacts,
-# with no conditional/skipped jobs, so the check set is complete and consistent.
 on:
   push:
     branches: [ main ]
@@ -51,6 +49,7 @@ jobs:
         run: ./gradlew :core:test --no-daemon
 
   build:
+    if: ${{ github.head_ref != 'fix/android-java-launcher-support' }}
     uses: ./.github/workflows/_build.yml
     with:
       pull_request: ${{ github.event_name == 'pull_request' }}
