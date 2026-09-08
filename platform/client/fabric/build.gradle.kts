@@ -27,7 +27,7 @@ run {
 repositories {
     mavenCentral()
     maven("https://maven.fabricmc.net/")
-    maven("https://maven.parchmentmc.org")
+    if (!System.getenv("DREAMDISPLAYS_SKIP_PARCHMENT")?.equals("true", ignoreCase = true).orFalse()) maven("https://maven.parchmentmc.org")
     maven("https://maven.quiltmc.org/repository/release/")
     maven("https://maven.quiltmc.org/repository/snapshot/")
     maven("https://repo.papermc.io/repository/maven-public/")
