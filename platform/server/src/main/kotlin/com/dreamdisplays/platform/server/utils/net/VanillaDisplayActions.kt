@@ -105,15 +105,13 @@ object VanillaDisplayActions {
         }
     }
 
-    /** Handles a client-requested deletion, enforcing owner-or-permission check and physical proximity. */
+    /** Handles a client-requested deletion, enforcing the administrative delete permission and physical proximity. */
     fun delete(player: ServerPlayer, server: MinecraftServer, displayId: java.util.UUID) {
         val displayData = DisplayManager.getDisplayData(displayId) as? VanillaDisplayData
             ?: return MessageUtil.sendMessage(player, "noDisplay")
 
         val perms = VanillaServerState.config.permissions
-        if (displayData.ownerId != player.uuid &&
-            !VanillaPermissions.has(player, perms.deleteOthers, VanillaPermissions.Fallback.OP)
-        ) {
+        if (!VanillaPermissions.has(player, perms.deleteOthers, VanillaPermissions.Fallback.OP)) {
             MessageUtil.sendMessage(player, "displayCommandMissingPermission")
             return
         }
@@ -277,9 +275,9 @@ object VanillaDisplayActions {
         return VanillaPermissions.has(player, node, VanillaPermissions.Fallback.EVERYONE)
     }
 
-    /** True if [player] counts as a display admin (the `delete` node, or op level 2 without LuckPerms). */
+    /** True if [player] counts as a display admin (dedicated admin node, or op level 2 without LuckPerms). */
     fun isAdmin(player: ServerPlayer): Boolean =
-        VanillaPermissions.has(player, VanillaServerState.config.permissions.delete, VanillaPermissions.Fallback.OP)
+        VanillaPermissions.has(player, VanillaServerState.config.permissions.admin, VanillaPermissions.Fallback.OP)
 
     /** True if [player] holds the premium node (op level 2 without LuckPerms, matching legacy behavior). */
     fun isPremium(player: ServerPlayer): Boolean =

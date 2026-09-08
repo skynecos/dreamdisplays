@@ -8,6 +8,7 @@ import com.dreamdisplays.api.media.sink.model.DecodedVideoFrame
 import com.dreamdisplays.api.render.texture.model.TextureHandle
 import com.dreamdisplays.api.render.texture.service.TextureUploaderService
 import com.dreamdisplays.platform.client.render.AsyncTextureUploader.Companion.PBO_COUNT
+import com.dreamdisplays.util.OsInfo
 import org.lwjgl.opengl.*
 import org.lwjgl.system.MemoryUtil
 import java.nio.ByteBuffer
@@ -29,7 +30,9 @@ import java.nio.ByteBuffer
  * mapping, skipping the per-frame `glMapBufferRange`/`glUnmapBuffer` driver round-trip.
  *
  * On contexts without it (e.g. macOS GL 4.1) the classic map-with-`GL_MAP_UNSYNCHRONIZED_BIT` path is used,
- * which the fences also make safe.
+ * which the fences also make safe. Android/Pojav also deliberately uses this classic path: some mobile
+ * GL bridges advertise buffer-storage support but cannot safely execute the GL 4.2 memory barrier used
+ * by the persistent path.
  */
 class AsyncTextureUploader(private val stateCache: Boolean) : TextureUploaderService {
     /** One ring entry: a PBO with its allocated size, guarding fence and optional persistent mapping. */
@@ -62,12 +65,23 @@ class AsyncTextureUploader(private val stateCache: Boolean) : TextureUploaderSer
     /** Managed texture size (height). */
     private var managedTexH: Int = -1
 
-    /** True when immutable persistently-mapped buffer storage is available on this context. */
+    /**
+     * True when immutable persistently-mapped buffer storage is safe on this context.
+     *
+     * Pojav/Kirazium's mobile GL bridge can report OpenGL 4.4 / ARB_buffer_storage while the GL42
+     * memory barrier used after a coherent mapping is not actually callable in the active context.
+     * Calling it aborts the JVM in native LWJGL code, so Android launchers stay on the ordinary mapped
+     * PBO path. Desktop behaviour is intentionally unchanged.
+     */
     private val persistentMapSupported: Boolean by lazy {
-        runCatching {
-            val caps = GL.getCapabilities()
-            caps.OpenGL44 || caps.GL_ARB_buffer_storage
-        }.getOrDefault(false)
+        if (OsInfo.isAndroidLike) {
+            false
+        } else {
+            runCatching {
+                val caps = GL.getCapabilities()
+                caps.OpenGL44 || caps.GL_ARB_buffer_storage
+            }.getOrDefault(false)
+        }
     }
 
     /** Async support. */

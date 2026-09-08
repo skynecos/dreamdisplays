@@ -1,0 +1,22 @@
+{
+  "dreamdisplays.ui.subtitle_preferences": "Altyazı ayarları",
+  "dreamdisplays.ui.subtitle_local_only": "Bu ayarlar yalnızca senin istemcinde geçerlidir.",
+  "dreamdisplays.button.subtitles": "Altyazılar",
+  "dreamdisplays.button.subtitle_size": "Yazı boyutu",
+  "dreamdisplays.button.subtitle_position": "Dikey konum",
+  "dreamdisplays.button.enabled": "Açık",
+  "dreamdisplays.button.disabled": "Kapalı",
+  "dreamdisplays.subtitle.live_preview": "Canlı önizleme",
+  "dreamdisplays.subtitle.preview": "Altyazı önizlemesi",
+  "dreamdisplays.subtitle.font": "Yazı tipi",
+  "dreamdisplays.subtitle.font.minecraft": "Minecraft",
+  "dreamdisplays.subtitle.font.uniform": "Uniform",
+  "dreamdisplays.subtitle.text_color": "Yazı rengi",
+  "dreamdisplays.subtitle.outline_color": "Kenarlık rengi",
+  "dreamdisplays.subtitle.background_color": "Arka plan rengi",
+  "dreamdisplays.subtitle.background_opacity": "Arka plan şeffaflığı",
+  "dreamdisplays.subtitle.configure": "Ayarla",
+  "dreamdisplays.subtitle.reset": "Görünümü sıfırla",
+  "dreamdisplays.subtitle.color.off": "Kapat",
+  "dreamdisplays.subtitle.color.disabled": "Kapalı"
+}

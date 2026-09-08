@@ -329,7 +329,7 @@ class DisplayMenu private constructor(
                 displays.delete(displayId)
                 onClose()
             })
-        deleteButton.enabledWhen = { ds.owner || ds.isAdmin }
+        deleteButton.enabledWhen = { ds.isAdmin }
 
         val reportButton = if (ClientStateManager.isReportingEnabled) {
             addUi(
@@ -342,9 +342,19 @@ class DisplayMenu private constructor(
                 })
         } else null
 
+        // Subtitle preferences are personal for every account, including administrators. Keep an
+        // explicit entry in the full management screen so admins do not lose access to them.
+        val subtitleSettingsButton = addUi(IconButton("lang") {
+            MinecraftScreenUtil.setScreen(
+                Minecraft.getInstance(),
+                SubtitlePreferencesMenu(ds, this),
+            )
+        })
+        subtitleSettingsButton.visibleWhen = notErrored
+
         suggestions = addUi(SuggestionsPanel(::onPickSuggested, ds.suggestionsController))
         suggestions.visibleWhen = { !ds.errored && suggestionsRect != null }
-        // Locked / Broadcast / Watch party displays only let the owner / admin change the video, so
+        // Locked / Broadcast / Watch party displays only let an admin change the video, so
         // the panel shows an "unavailable" notice to everyone else instead of pickable suggestions.
         suggestions.available = { ds.canSetVideoHere }
 
@@ -355,7 +365,7 @@ class DisplayMenu private constructor(
             )
         settings = SettingsSection(
             rows = settingsRows(renderDReset, qualityReset, brightnessReset, audio3dReset, syncReset),
-            ownerActions = listOf(reportButton, deleteButton, lockButton),
+            ownerActions = listOf(reportButton, deleteButton, lockButton, subtitleSettingsButton),
             buttonTooltips = listOf(
                 lockButton to {
                     ds.isLocked?.let { locked ->
@@ -369,6 +379,14 @@ class DisplayMenu private constructor(
                 },
                 deleteButton to { buttonTooltip("dreamdisplays.button.delete") },
                 reportButton to { buttonTooltip("dreamdisplays.button.report") },
+                subtitleSettingsButton to {
+                    listOf(
+                        Component.translatable("dreamdisplays.ui.subtitle_preferences")
+                            .withStyle { it.withColor(ChatFormatting.WHITE).withBold(true) },
+                        Component.translatable("dreamdisplays.ui.subtitle_local_only")
+                            .withStyle { it.withColor(ChatFormatting.GRAY) },
+                    )
+                },
             ),
         )
         errorPanel = ErrorPanel(retryButton, deleteButton, reportButton) { ds.mediaError }
@@ -704,9 +722,15 @@ class DisplayMenu private constructor(
         /** The three sync-mode notches exposed by the playback-mode slider. */
         private val SYNC_MODES = listOf(PlaybackMode.LOCAL, PlaybackMode.SYNCED, PlaybackMode.BROADCAST)
 
-        /** Opens the menu for [displayScreen]. */
+        /**
+         * Opens full management only for an admin. Every other viewer is routed to the
+         * client-local subtitle screen, so no video or display controls are exposed.
+         */
         fun open(displayScreen: DisplayScreen) {
-            MinecraftScreenUtil.setScreen(Minecraft.getInstance(), DisplayMenu(displayScreen))
+            val screen =
+                if (displayScreen.isAdmin) DisplayMenu(displayScreen)
+                else SubtitlePreferencesMenu(displayScreen)
+            MinecraftScreenUtil.setScreen(Minecraft.getInstance(), screen)
         }
     }
 }

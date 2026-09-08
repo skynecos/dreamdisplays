@@ -49,6 +49,30 @@ data class ClientDisplaySettings(
 
     /** Whether the 3D acoustics engine applies to this display; false forces the legacy distance-gain-only path. */
     var acousticsEnabled: Boolean = true,
+
+    /** Viewer-local subtitle visibility. Never sent to or persisted by the server. */
+    var subtitlesEnabled: Boolean = true,
+
+    /** Viewer-local subtitle text scale. Clamped to [0.5, 2.0] by the client. */
+    var subtitleScale: Float = 1.0f,
+
+    /** Viewer-local vertical subtitle position, from 0.0 (bottom) to 1.0 (higher). */
+    var subtitleVerticalPosition: Float = 0.15f,
+
+    /** Viewer-local subtitle font preset token. */
+    var subtitleFont: String = "default",
+
+    /** Viewer-local opaque ARGB subtitle text color. */
+    var subtitleTextColor: Int = -1,
+
+    /** Viewer-local ARGB subtitle outline color. Alpha zero disables the outline. */
+    var subtitleOutlineColor: Int = 0x00000000,
+
+    /** Viewer-local RGB/ARGB source color used by the subtitle background plate. */
+    var subtitleBackgroundColor: Int = 0xFF000000.toInt(),
+
+    /** Viewer-local subtitle background opacity in the range 0.0..1.0. */
+    var subtitleBackgroundOpacity: Float = 0.0f,
 ) {
 
     companion object {

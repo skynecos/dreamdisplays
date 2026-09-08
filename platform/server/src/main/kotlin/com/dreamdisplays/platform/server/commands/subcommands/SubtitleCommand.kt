@@ -62,7 +62,7 @@ class SubtitleCommand {
     private fun editable(sender: CommandSender, player: Player, token: String): PaperDisplayData? {
         val data = resolvePaperDisplayTarget(sender, player, token) as? PaperDisplayData ?: return null
         if (!PlaybackPermissions.canSetVideo(
-                PlaybackContexts.of(data, player.uniqueId, player.hasPermission(PaperServer.config.permissions.delete))
+                PlaybackContexts.of(data, player.uniqueId, player.hasPermission(PaperServer.config.permissions.admin))
             )
         ) {
             sendMediaMessage(player, "§cBu ekranın altyazısını değiştiremezsin.")

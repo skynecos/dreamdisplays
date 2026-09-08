@@ -99,15 +99,16 @@ object WatchPartyManager {
     }
 
     /**
-     * Applies a participant or host control. `READY` / `UNREADY` are open to any nearby player; every
-     * other action requires the host. Returns true when the control was applied and rebroadcast.
+     * Applies a watch-party control. Viewer accounts are intentionally read-only; even READY / UNREADY
+     * are rejected unless the sender is the display owner or an administrator.
      */
     fun control(display: DisplayData, senderId: UUID, action: WatchPartyAction, positionMs: Long): Boolean {
         val session = sessions[display.id] ?: return false
+        val ctx = PlaybackContexts.of(display, senderId, transport.isAdmin(senderId))
+        if (!PlaybackPermissions.canManageDisplay(ctx)) return false
         val now = transport.nowMs()
 
         if (action == WatchPartyAction.CLOSE) {
-            val ctx = PlaybackContexts.of(display, senderId, transport.isAdmin(senderId))
             if (!PlaybackPermissions.canCloseWatchParty(ctx)) return false
             close(display)
             return true

@@ -49,6 +49,14 @@ object FFmpegBinary {
      * and falls back to the system `FFmpeg` on any failure.
      */
     private fun resolve(): String? {
+        // Android launchers run on a Linux kernel but cannot use the glibc BtbN Linux bundle. Prefer
+        // the launcher's own executable/native-library payload (including the separate FFmpeg APK)
+        // and never attempt the desktop Linux download path there.
+        if (OsInfo.isAndroidLike) {
+            disableAndroidNativePipeline()
+            return resolveAndroidFfmpeg()
+        }
+
         val p = detectPlatform() ?: run {
             logger.warn("No bundled binary URL for this OS / arch; trying system FFmpeg.")
             return findSystemFfmpeg()
@@ -77,6 +85,113 @@ object FFmpegBinary {
         }.getOrElse { e ->
             logger.error("Download failed, falling back to system ffmpeg", e)
             findSystemFfmpeg()
+        }
+    }
+
+    /**
+     * Android/Pojav cannot load the desktop Rust/Linux native bundle reliably. Disable every native
+     * video path before [PlaybackSessionManager] creates its channel so it deterministically falls
+     * back to the JVM PPM/RGB pipeline while desktop platforms keep their native/YUV path unchanged.
+     */
+    private fun disableAndroidNativePipeline() {
+        System.setProperty("dreamdisplays.native", "false")
+        System.setProperty("dreamdisplays.native.libav", "false")
+        System.setProperty("dreamdisplays.native.nv12", "false")
+        System.setProperty("dreamdisplays.native.yuvgpu", "false")
+        logger.info("Android/Pojav detected; using external FFmpeg with the JVM RGB video pipeline.")
+    }
+
+    /**
+     * Resolves FFmpeg supplied by an Android Java launcher or by the companion FFmpeg APK.
+     *
+     * Mojo/Pojav exposes `git.mojo.ffmpeg` as `POJAV_FFMPEG_PATH`, pointing at the plugin's
+     * `nativeLibraryDir/libffmpeg.so`. Its native ProcessBuilder hook intentionally intercepts the
+     * executable name `ffmpeg`, swaps it for that `.so`, and installs the plugin's dependency path.
+     * Therefore the wrapper name is preferred over executing `libffmpeg.so` directly.
+     */
+    private fun resolveAndroidFfmpeg(): String? {
+        val pojavPlugin = System.getenv("POJAV_FFMPEG_PATH")?.trim()?.takeIf { it.isNotEmpty() }
+        if (pojavPlugin != null) {
+            if (probeFfmpeg("ffmpeg")) {
+                logger.info("Using Pojav FFmpeg plugin through launcher exec hook: $pojavPlugin")
+                return "ffmpeg"
+            }
+            // Custom launchers may expose the same variable without the exec hook. Keep a direct
+            // fallback for those implementations, but Mojo/Kirazium should normally take the path above.
+            if (probeFfmpeg(pojavPlugin)) {
+                logger.info("Using Pojav FFmpeg plugin directly: $pojavPlugin")
+                return pojavPlugin
+            }
+            logger.warn("POJAV_FFMPEG_PATH is set but unusable: $pojavPlugin")
+        }
+
+        val explicit = listOfNotNull(
+            System.getProperty("dreamdisplays.android.ffmpeg"),
+            System.getProperty("dreamdisplays.ffmpeg"),
+            System.getenv("DREAMDISPLAYS_ANDROID_FFMPEG"),
+            System.getenv("DREAMDISPLAYS_FFMPEG"),
+        ).map { it.trim() }.filter { it.isNotEmpty() }
+
+        for (candidate in explicit) {
+            if (probeFfmpeg(candidate)) {
+                logger.info("Using Android FFmpeg override: $candidate")
+                return candidate
+            }
+            logger.warn("Ignoring unusable Android FFmpeg override: $candidate")
+        }
+
+        val dirs = linkedSetOf<String>()
+        fun addPathList(value: String?) {
+            value?.split(File.pathSeparatorChar)
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.forEach { dirs.add(it) }
+        }
+
+        addPathList(System.getenv("POJAV_NATIVEDIR"))
+        addPathList(System.getenv("LD_LIBRARY_PATH"))
+        addPathList(System.getProperty("java.library.path"))
+        addPathList(System.getenv("PATH"))
+
+        val names = arrayOf("libffmpeg.so", "ffmpeg")
+        for (dir in dirs) {
+            val base = File(dir)
+            if (!base.isDirectory) continue
+            for (name in names) {
+                val candidate = File(base, name)
+                if (!candidate.isFile || candidate.length() <= 0L) continue
+                val path = candidate.absolutePath
+                if (probeFfmpeg(path)) {
+                    logger.info("Using Android launcher/APK FFmpeg: $path")
+                    return path
+                }
+            }
+        }
+
+        // Some launchers put a wrapper named ffmpeg directly on PATH.
+        findSystemFfmpeg()?.let { return it }
+        logger.error(
+            "Android FFmpeg not found. Install/expose the git.mojo.ffmpeg companion plugin or set " +
+                "POJAV_FFMPEG_PATH / DREAMDISPLAYS_ANDROID_FFMPEG to its executable path."
+        )
+        return null
+    }
+
+    /** Returns true only when [candidate] can actually execute FFmpeg and answer `-version`. */
+    private fun probeFfmpeg(candidate: String): Boolean {
+        return try {
+            val process = ProcessBuilder(candidate, "-version").redirectErrorStream(true).start()
+            daemon({
+                try {
+                    process.inputStream.transferTo(OutputStream.nullOutputStream())
+                } catch (_: Exception) {
+                }
+            }, "FFmpeg-version-drain").start()
+            val ok = process.waitFor(3, TimeUnit.SECONDS) && process.exitValue() == 0
+            if (!ok) process.destroyForcibly()
+            ok
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -151,20 +266,9 @@ object FFmpegBinary {
     private fun findSystemFfmpeg(): String? {
         val candidates = arrayOf("ffmpeg", "/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg")
         for (candidate in candidates) {
-            try {
-                val p = ProcessBuilder(candidate, "-version").redirectErrorStream(true).start()
-                daemon({
-                    try {
-                        p.inputStream.transferTo(OutputStream.nullOutputStream())
-                    } catch (_: Exception) {
-                    }
-                }, "FFmpeg-version-drain").start()
-                if (p.waitFor(3, TimeUnit.SECONDS) && p.exitValue() == 0) {
-                    logger.info("Using system ffmpeg: $candidate...")
-                    return candidate
-                }
-                p.destroyForcibly()
-            } catch (_: Exception) {
+            if (probeFfmpeg(candidate)) {
+                logger.info("Using system ffmpeg: $candidate...")
+                return candidate
             }
         }
         logger.error("FFmpeg not found (no download succeeded, no system binary).")
@@ -173,6 +277,7 @@ object FFmpegBinary {
 
     /** Returns a [Platform] descriptor for the current OS and architecture, or null if no bundled build is available. */
     private fun detectPlatform(): Platform? {
+        if (OsInfo.isAndroidLike) return null
         val isArm = OsInfo.isArm
         return when {
             OsInfo.isWindows -> if (isArm) null else
