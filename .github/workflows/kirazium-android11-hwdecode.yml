@@ -1,0 +1,257 @@
+name: Kirazium Android11 Hardware Decode
+
+on:
+  push:
+    branches:
+      - codex/android11-hwdecode
+    paths:
+      - ".github/workflows/kirazium-android11-hwdecode.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FFMPEG_PLUGIN_COMMIT: "5422b575f2402810ba9bfdc07c3f78bab98a15a2"
+  FFMPEG_KIT_COMMIT: "97760a31349439243487a99adbcde09e9dabe458"
+  ANDROID_NDK_VERSION: "25.1.8937393"
+  LAUNCHER_BRANCH: "codex/android11-hwdecode"
+
+jobs:
+  build-fabric-26-1-2:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: Checkout Android11 subtitle source
+        uses: actions/checkout@v4
+
+      - name: Fetch Android11 launcher and patch tools
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$LAUNCHER_BRANCH" \
+            https://github.com/skynecos/KiraziumLauncher.git \
+            "$RUNNER_TEMP/KiraziumLauncher"
+
+      - name: Set up JDK 17 for helper APK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Install Android and native build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            autogen autoconf automake autopoint build-essential clang cmake gettext \
+            gperf groff gtk-doc-tools libclang-dev libtasn1-bin libtool libtool-bin \
+            nasm pkg-config yasm
+
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK_ROOT"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -perm -u+x | head -n 1 || true)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" \
+            "ndk;${ANDROID_NDK_VERSION}" \
+            "platforms;android-36" \
+            "build-tools;36.0.0"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned MediaCodec FFmpeg helper sources
+        run: |
+          set -euo pipefail
+          PLUGIN_DIR="$RUNNER_TEMP/FFmpegPlugin"
+          git init "$PLUGIN_DIR"
+          git -C "$PLUGIN_DIR" remote add origin https://github.com/MojoLauncher/FFmpegPlugin.git
+          git -C "$PLUGIN_DIR" fetch --depth 1 origin "$FFMPEG_PLUGIN_COMMIT"
+          git -C "$PLUGIN_DIR" checkout --detach FETCH_HEAD
+
+          git init "$PLUGIN_DIR/ffmpeg-kit"
+          git -C "$PLUGIN_DIR/ffmpeg-kit" remote add origin https://github.com/arthenica/ffmpeg-kit.git
+          git -C "$PLUGIN_DIR/ffmpeg-kit" fetch --depth 1 origin "$FFMPEG_KIT_COMMIT"
+          git -C "$PLUGIN_DIR/ffmpeg-kit" checkout --detach FETCH_HEAD
+          git -C "$PLUGIN_DIR/ffmpeg-kit" apply "$PLUGIN_DIR/scripts/ffmpeg_enable_executable.diff"
+
+      - name: Build HTTPS MediaCodec FFmpeg helper
+        run: |
+          set -euo pipefail
+          LAUNCHER="$RUNNER_TEMP/KiraziumLauncher"
+          chmod +x "$LAUNCHER/tools/dreamdisplays-ffmpeg/build-test-apk.sh"
+          "$LAUNCHER/tools/dreamdisplays-ffmpeg/build-test-apk.sh" "$RUNNER_TEMP/FFmpegPlugin"
+
+          FFROOT="$RUNNER_TEMP/FFmpegPlugin/ffmpeg-kit/prebuilt/android-arm64/ffmpeg"
+          test -s "$FFROOT/lib/libavcodec.so"
+          test -s "$FFROOT/lib/libavformat.so"
+          test -d "$FFROOT/include"
+          strings "$FFROOT/lib/libavcodec.so" | grep -F -- '--enable-mediacodec' >/dev/null
+          strings "$FFROOT/lib/libavcodec.so" | grep -F -- '--enable-jni' >/dev/null
+          readelf -Ws "$FFROOT/lib/libavcodec.so" | grep -F 'av_jni_set_java_vm' >/dev/null
+          strings "$FFROOT/lib/libavcodec.so" | grep -F 'h264_mediacodec' >/dev/null
+
+      - name: Set up JDK 25 for Dream Displays
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Layer Android11 hardware decode over stable subtitles
+        run: |
+          set -euo pipefail
+          LAUNCHER="$RUNNER_TEMP/KiraziumLauncher"
+          printf '26.1.2\n' > versions/active.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('gradle.properties')
+          lines = p.read_text().splitlines()
+          lines = [('version=1.9.5' if line.startswith('version=') else line) for line in lines]
+          p.write_text('\n'.join(lines) + '\n')
+          PY
+
+          for patch in apply-patches.py apply-android4.py apply-android5.py apply-android6.py apply-android7.py apply-android8.py apply-android9.py apply-android11.py; do
+            cp "$LAUNCHER/tools/dreamdisplays-android/$patch" "./$patch"
+            python3 "./$patch"
+          done
+
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in Path('.').rglob('*.gradle.kts'):
+              text = p.read_text()
+              new = text.replace('        maven("https://maven.parchmentmc.org")\n', '') \
+                        .replace('    maven("https://maven.parchmentmc.org")\n', '')
+              if new != text:
+                  p.write_text(new)
+          PY
+
+      - name: Build Android ARM64 native and MediaCodec LAV
+        run: |
+          set -euo pipefail
+          NDK_ROOT="$ANDROID_NDK_ROOT"
+          TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SYSROOT="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          test -x "$TOOLCHAIN/aarch64-linux-android24-clang"
+
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android
+
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN/aarch64-linux-android24-clang"
+          export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang"
+          export CXX_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang++"
+          export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
+
+          FFROOT="$RUNNER_TEMP/FFmpegPlugin/ffmpeg-kit/prebuilt/android-arm64/ffmpeg"
+          export FFMPEG_DIR="$FFROOT"
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_PATH="$FFROOT/lib/pkgconfig"
+          export BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android24 --sysroot=$SYSROOT -I$FFROOT/include"
+          export LIBCLANG_PATH="$(dirname "$(find /usr/lib/llvm-* -name libclang.so -o -name 'libclang.so.*' | head -n 1)")"
+
+          cd native
+          cargo build --locked --release --target aarch64-linux-android -p dreamdisplays-native
+          cargo build --locked --release --target aarch64-linux-android -p dreamdisplays-lav
+
+          BUNDLE="build/ci-bundle/dreamdisplays-natives/linux-aarch64"
+          mkdir -p "$BUNDLE"
+          cp target/aarch64-linux-android/release/libdreamdisplays_native.so "$BUNDLE/libdreamdisplays_native.so"
+          cp target/aarch64-linux-android/release/libdreamdisplays_lav.so "$BUNDLE/libdreamdisplays_lav.so"
+          test -s "$BUNDLE/libdreamdisplays_native.so"
+          test -s "$BUNDLE/libdreamdisplays_lav.so"
+          "$TOOLCHAIN/llvm-readelf" -h "$BUNDLE/libdreamdisplays_lav.so" | grep -F 'AArch64' >/dev/null
+          "$TOOLCHAIN/llvm-readelf" -Ws "$BUNDLE/libdreamdisplays_lav.so" | grep -F 'JNI_OnLoad' >/dev/null
+
+      - name: Preflight hardware decode and subtitle regression guards
+        run: |
+          set -euo pipefail
+          test "$(cat versions/active.txt)" = "26.1.2"
+          test -s native/build/ci-bundle/dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so
+
+          grep -Fq 'MEDIACODEC("mediacodec", null, 6)' media/player/src/main/kotlin/com/dreamdisplays/media/player/process/HwAccelBackend.kt
+          grep -Fq 'return HwAccelBackend.MEDIACODEC.lavCode' media/player/src/main/kotlin/com/dreamdisplays/media/player/pipeline/NativeVideoFramePipe.kt
+          grep -Fq 'KIRAZIUM_ANDROID_ART_VM' native/lav/src/lib.rs
+          grep -Fq 'Registered Kirazium Android ART VM with FFmpeg MediaCodec.' native/lav/src/lib.rs
+          grep -Fq 'h264_mediacodec' native/lav/src/session.rs
+          grep -Fq 'version=1.9.5-kirazium-android11-hwdecode' gradle.properties
+
+          MENU='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/DisplayMenu.kt'
+          PREF='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/SubtitlePreferencesMenu.kt'
+          VTT='platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/subtitles/WebVttController.kt'
+          test -s "$PREF"
+          test -s "$VTT"
+          grep -Fq 'SubtitlePreferencesMenu(ds, this)' "$MENU"
+          grep -Fq 'displayScreen.subtitleScale' "$PREF"
+          grep -Fq 'displayScreen.subtitleVerticalPosition' "$PREF"
+          grep -Fq 'subtitleBackgroundOpacity' "$PREF"
+          grep -Fq 'subtitleFont' "$PREF"
+          grep -Fq 'subtitleTextColor' "$PREF"
+          grep -Fq 'subtitleOutlineColor' "$PREF"
+          grep -Fq 'subtitleBackgroundColor' "$PREF"
+          grep -Fq 'class WebVttController' "$VTT"
+
+      - name: Build Fabric 26.1.2 Android11 mod
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew :platform:client:fabric:publishJar \
+            -Pdreamdisplays.autoBuildNatives=false \
+            --no-daemon \
+            --stacktrace
+
+      - name: Collect and verify Android11 bundle
+        run: |
+          set -euo pipefail
+          JAR="build/libs/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android11-hwdecode.jar"
+          APK="$RUNNER_TEMP/FFmpegPlugin/app/build/outputs/apk/debug/app-debug.apk"
+          mkdir -p out verify-jar
+          test -s "$JAR"
+          test -s "$APK"
+
+          jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_native.so' >/dev/null
+          jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so' >/dev/null
+          jar tf "$JAR" | grep -F 'SubtitlePreferencesMenu' >/dev/null
+          jar tf "$JAR" | grep -F 'WebVttController' >/dev/null
+
+          unzip -p "$JAR" dreamdisplays-natives/linux-aarch64/libdreamdisplays_lav.so > verify-jar/libdreamdisplays_lav.so
+          readelf -Ws verify-jar/libdreamdisplays_lav.so | grep -F 'JNI_OnLoad' >/dev/null
+          strings verify-jar/libdreamdisplays_lav.so | grep -F 'KIRAZIUM_ANDROID_ART_VM' >/dev/null
+          strings verify-jar/libdreamdisplays_lav.so | grep -F 'Registered Kirazium Android ART VM with FFmpeg MediaCodec.' >/dev/null
+
+          unzip -p "$APK" lib/arm64-v8a/libavcodec.so > verify-jar/libavcodec.so
+          strings verify-jar/libavcodec.so | grep -F -- '--enable-mediacodec' >/dev/null
+          readelf -Ws verify-jar/libavcodec.so | grep -F 'av_jni_set_java_vm' >/dev/null
+
+          cp "$JAR" out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android11-hwdecode.jar
+          cp "$APK" out/Kirazium-DreamDisplays-FFmpeg-MediaCodec-arm64.apk
+          sha256sum out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android11-hwdecode.jar > out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android11-hwdecode.jar.sha256
+          sha256sum out/Kirazium-DreamDisplays-FFmpeg-MediaCodec-arm64.apk > out/Kirazium-DreamDisplays-FFmpeg-MediaCodec-arm64.apk.sha256
+
+      - name: Publish verified Android11 bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          staged="$RUNNER_TEMP/android11-hwdecode-stage"
+          output="$RUNNER_TEMP/android11-hwdecode-output"
+          mkdir -p "$staged"
+          cp out/* "$staged/"
+
+          git worktree add --detach "$output" "$GITHUB_SHA"
+          cd "$output"
+          git switch --orphan android11-hwdecode-build
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p artifacts
+          cp "$staged"/* artifacts/
+          printf 'source_commit=%s\nsource_branch=codex/android11-hwdecode\nworkflow=android11-art-vm-hardware-decode\n' "$GITHUB_SHA" > artifacts/BUILD_INFO.txt
+          git add artifacts
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "build: verified Android11 hardware-decode bundle"
+          git push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            HEAD:refs/heads/android11-hwdecode-build
