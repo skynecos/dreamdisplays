@@ -13,6 +13,7 @@ PIPE="media/player/src/main/kotlin/com/dreamdisplays/media/player/pipeline/Nativ
 HW="media/player/src/main/kotlin/com/dreamdisplays/media/player/process/HwAccelBackend.kt"
 PLAYER="media/player/src/main/kotlin/com/dreamdisplays/media/player/MediaPlayer.kt"
 SESSION="media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/PlaybackSessionManager.kt"
+WATCHDOG="media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/StreamWatchdog.kt"
 CONTROLLER="platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayMediaController.kt"
 MENU="platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/DisplayMenu.kt"
 PREF="platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/ui/SubtitlePreferencesMenu.kt"
@@ -63,7 +64,7 @@ python3 - <<'PY'
 from pathlib import Path
 gp = Path('gradle.properties')
 lines = gp.read_text().splitlines()
-lines = [('version=1.9.5-kirazium-android-testoptimize' if line.startswith('version=') else line) for line in lines]
+lines = [('version=1.9.5-kirazium-android-stallfix1' if line.startswith('version=') else line) for line in lines]
 gp.write_text('\n'.join(lines) + '\n')
 PY
 
@@ -98,10 +99,16 @@ grep -Fq 'coerceIn(2, 4)' "$PLAYER"
 grep -Fq 'audioWarmPool.setTracks(emptyList())' "$SESSION"
 grep -Fq 'DISCARD_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(2)' "$SESSION"
 grep -Fq 'DISCARD_EXECUTOR.execute {' "$SESSION"
+grep -Fq 'lastFrameProgressNanos' "$SESSION"
+grep -Fq 'getLastProgressNanos' "$WATCHDOG"
+grep -Fq 'startupHardTimeoutMs' "$WATCHDOG"
+grep -Fq 'stallThresholdMs = if (ANDROID_POJAV) 15_000L else 45_000L' "$PLAYER"
+grep -Fq 'startupThresholdMs = 20_000L' "$PLAYER"
+grep -Fq 'startupHardTimeoutMs = if (ANDROID_POJAV) 45_000L else 60_000L' "$PLAYER"
 
 grep -Fq 'provisionAndroidHelperLibraries' media/player/src/main/kotlin/com/dreamdisplays/media/player/nativebridge/LavFfmpeg.kt
 grep -Fq 'System.load(lib.absolutePath)' media/player/src/main/kotlin/com/dreamdisplays/media/player/nativebridge/NativeMedia.kt
-grep -Fq 'version=1.9.5-kirazium-android-testoptimize' gradle.properties
+grep -Fq 'version=1.9.5-kirazium-android-stallfix1' gradle.properties
 
 test -s "$PREF"
 test -s "$VTT"
@@ -121,7 +128,7 @@ chmod +x gradlew
   --no-daemon \
   --stacktrace
 
-JAR="build/libs/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-testoptimize.jar"
+JAR="build/libs/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
 test -s "$JAR"
 mkdir -p out verify-jar
 jar tf "$JAR" | grep -F 'dreamdisplays-natives/linux-aarch64/libdreamdisplays_native.so' >/dev/null
@@ -139,8 +146,14 @@ if grep -F 'HwAccelBackend.MEDIACODEC' verify-jar/NativeVideoFramePipe.txt >/dev
   exit 1
 fi
 
-cp "$JAR" out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-testoptimize.jar
-sha256sum out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-testoptimize.jar > out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-testoptimize.jar.sha256
+javap -classpath "$JAR" -p com.dreamdisplays.media.player.managers.StreamWatchdog > verify-jar/StreamWatchdog.txt
+javap -classpath "$JAR" -p com.dreamdisplays.media.player.managers.PlaybackSessionManager > verify-jar/PlaybackSessionManager.txt
+grep -F 'getLastProgressNanos' verify-jar/StreamWatchdog.txt >/dev/null
+grep -F 'startupHardTimeoutMs' verify-jar/StreamWatchdog.txt >/dev/null
+grep -F 'getLastFrameProgressNanos' verify-jar/PlaybackSessionManager.txt >/dev/null
+
+cp "$JAR" out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar
+sha256sum out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar > out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar.sha256
 
 staged="$RUNNER_TEMP/testoptimize-stage"
 output="$RUNNER_TEMP/testoptimize-output"
@@ -154,7 +167,7 @@ git switch --orphan testoptimize-build
 git rm -rf . >/dev/null 2>&1 || true
 mkdir -p artifacts
 cp "$staged"/* artifacts/
-printf 'source_commit=%s\nsource_branch=testoptimize\nworkflow=testoptimize\ndecode=software\nbase_native_jar_sha256=%s\noptimizations=duplicate-load-dedupe,android-init-cap,audio-warm-pool-off,bounded-discard-workers\n' \
+printf 'source_commit=%s\nsource_branch=testoptimize\nworkflow=testoptimize\ndecode=software\nbase_native_jar_sha256=%s\noptimizations=duplicate-load-dedupe,android-init-cap,audio-warm-pool-off,bounded-discard-workers,decoder-progress-watchdog,pre-roll-safe-startup\nwatchdog_android_ms=stall:15000,startup-progress:20000,startup-hard:45000\n' \
   "$GITHUB_SHA" "$BASE_ANDROID10_JAR_SHA256" > artifacts/BUILD_INFO.txt
 git add artifacts
 git -c user.name='github-actions[bot]' \
