@@ -93,36 +93,43 @@ replace(
 replace(
     "media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/PlaybackSessionManager.kt",
     '''    /** Timestamp of the live channel's last decoded video frame; read by [StreamWatchdog]. */\n    val lastFrameNanos: AtomicLong get() = active?.pipe?.lastFrameReceivedNanos ?: noFrames\n''',
-    '''    /** Timestamp of the live channel's last real playback frame; read by [StreamWatchdog]. */\n    val lastFrameNanos: AtomicLong get() = active?.pipe?.lastFramePresentedNanos ?: noFrames\n''',
+    '''    /** Timestamp of the live channel's last real playback frame; read by [StreamWatchdog]. */\n    val lastFrameNanos: AtomicLong get() = active?.pipe?.lastFramePresentedNanos ?: noFrames\n\n    /** Decoder progress, including seek/pre-roll frames that are intentionally not presented. */\n    val lastFrameProgressNanos: AtomicLong get() = active?.pipe?.lastFrameReceivedNanos ?: noFrames\n''',
 )
 
-# 6) A presentation stamp starts at zero, so give startup its own monotonic grace window instead of
-# interpreting zero as "stalled since boot". This also makes the watchdog valid for all future pipes.
+# 6) Treat decoder progress and real presentation as separate signals. Software decoding a 1080p
+# seek can spend several seconds in native pre-roll without a presentable frame. Killing that healthy
+# work on an 8 s timer creates a permanent reopen/seek loop. Progress gets a 20 s silence budget and
+# startup gets a 45 s hard ceiling; once playout starts, a 15 s presentation stall still recovers.
+replace(
+    "media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/StreamWatchdog.kt",
+    '''    private val getLastFrameNanos: () -> Long,\n    private val stallThresholdMs: Long = 45_000L,\n    private val startupThresholdMs: Long = 20_000L,\n    private val checkIntervalMs: Long = 1_000L,\n''',
+    '''    private val getLastFrameNanos: () -> Long,\n    private val getLastProgressNanos: () -> Long = getLastFrameNanos,\n    private val stallThresholdMs: Long = 45_000L,\n    private val startupThresholdMs: Long = 20_000L,\n    private val startupHardTimeoutMs: Long = 60_000L,\n    private val checkIntervalMs: Long = 1_000L,\n''',
+)
+
 replace(
     "media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/StreamWatchdog.kt",
     '''    private var deliveredAFrame = false\n    private var lastSeenStamp = 0L\n\n    /** Coroutine scope for the watchdog task. */\n''',
-    '''    private var deliveredAFrame = false\n    private var lastSeenStamp = 0L\n    private var startedNanos = 0L\n\n    /** Coroutine scope for the watchdog task. */\n''',
+    '''    private var deliveredAFrame = false\n    private var lastSeenPresentedStamp = 0L\n    private var lastSeenProgressStamp = 0L\n    private var startedNanos = 0L\n\n    /** Coroutine scope for the watchdog task. */\n''',
 )
 
 replace(
     "media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/StreamWatchdog.kt",
     '''        deliveredAFrame = false\n        lastSeenStamp = getLastFrameNanos()\n        job = scope.launch {\n''',
-    '''        deliveredAFrame = false\n        lastSeenStamp = getLastFrameNanos()\n        startedNanos = System.nanoTime()\n        job = scope.launch {\n''',
+    '''        deliveredAFrame = false\n        lastSeenPresentedStamp = getLastFrameNanos()\n        lastSeenProgressStamp = getLastProgressNanos()\n        startedNanos = System.nanoTime()\n        job = scope.launch {\n''',
 )
 
 replace(
     "media/player/src/main/kotlin/com/dreamdisplays/media/player/managers/StreamWatchdog.kt",
-    '''            val silenceMs = (System.nanoTime() - stamp) / 1_000_000L\n            if (silenceMs < (if (deliveredAFrame) stallThresholdMs else startupThresholdMs)) return true\n''',
-    '''            val now = System.nanoTime()\n            val silenceMs = if (!deliveredAFrame) {\n                (now - startedNanos) / 1_000_000L\n            } else {\n                (now - stamp) / 1_000_000L\n            }\n            if (silenceMs < (if (deliveredAFrame) stallThresholdMs else startupThresholdMs)) return true\n''',
+    '''            val stamp = getLastFrameNanos()\n            if (stamp != lastSeenStamp) {\n                lastSeenStamp = stamp\n                deliveredAFrame = true\n            }\n            val silenceMs = (System.nanoTime() - stamp) / 1_000_000L\n            if (silenceMs < (if (deliveredAFrame) stallThresholdMs else startupThresholdMs)) return true\n            val what = if (deliveredAFrame) "No frames for $silenceMs ms" else "No first frame after $silenceMs ms"\n''',
+    '''            val now = System.nanoTime()\n            val presentedStamp = getLastFrameNanos()\n            if (presentedStamp != 0L && presentedStamp != lastSeenPresentedStamp) {\n                lastSeenPresentedStamp = presentedStamp\n                deliveredAFrame = true\n            }\n\n            val progressStamp = getLastProgressNanos()\n            if (progressStamp != lastSeenProgressStamp) lastSeenProgressStamp = progressStamp\n\n            val silenceMs: Long\n            val what: String\n            if (deliveredAFrame) {\n                val base = if (presentedStamp > 0L) presentedStamp else startedNanos\n                silenceMs = (now - base) / 1_000_000L\n                if (silenceMs < stallThresholdMs) return true\n                what = "No presented frames for $silenceMs ms"\n            } else {\n                val progressBase = if (progressStamp > 0L) progressStamp else startedNanos\n                silenceMs = (now - progressBase) / 1_000_000L\n                val startupElapsedMs = (now - startedNanos) / 1_000_000L\n                if (silenceMs < startupThresholdMs && startupElapsedMs < startupHardTimeoutMs) return true\n                what = if (startupElapsedMs >= startupHardTimeoutMs) {\n                    "No first presented frame after $startupElapsedMs ms (decoder progress ${silenceMs} ms ago)"\n                } else {\n                    "No decoder progress for $silenceMs ms before first presentation"\n                }\n            }\n''',
 )
 
-# 7) Phones should not sit on a frozen preview for tens of seconds. If no real frame is presented
-# within 8 s (or presentation stops for 8 s), reopen the A/V session once at the current clock.
+# 7) Reopen only after the progress-aware watchdog has proved the decoder/presentation path is stuck.
 # A second stall still follows the existing stronger cache-invalidate/re-resolve path.
 replace(
     "media/player/src/main/kotlin/com/dreamdisplays/media/player/MediaPlayer.kt",
     '''    private val watchdog = StreamWatchdog(\n        debugLabel = debugLabel,\n        isSessionActive = { sessionManager.isPlaying && !sessionManager.isParked() && !terminated.get() },\n        getLastFrameNanos = { sessionManager.lastFrameNanos.get() },\n        onStall = { handleSessionStall("no frames") },\n    )\n''',
-    '''    private val watchdog = StreamWatchdog(\n        debugLabel = debugLabel,\n        isSessionActive = { sessionManager.isPlaying && !sessionManager.isParked() && !terminated.get() },\n        getLastFrameNanos = { sessionManager.lastFrameNanos.get() },\n        stallThresholdMs = if (ANDROID_POJAV) 8_000L else 45_000L,\n        startupThresholdMs = if (ANDROID_POJAV) 8_000L else 20_000L,\n        onStall = { handleSessionStall("no presented video frames") },\n    )\n''',
+    '''    private val watchdog = StreamWatchdog(\n        debugLabel = debugLabel,\n        isSessionActive = { sessionManager.isPlaying && !sessionManager.isParked() && !terminated.get() },\n        getLastFrameNanos = { sessionManager.lastFrameNanos.get() },\n        getLastProgressNanos = { sessionManager.lastFrameProgressNanos.get() },\n        stallThresholdMs = if (ANDROID_POJAV) 15_000L else 45_000L,\n        startupThresholdMs = 20_000L,\n        startupHardTimeoutMs = if (ANDROID_POJAV) 45_000L else 60_000L,\n        onStall = { handleSessionStall("no presented video frames") },\n    )\n''',
 )
 
 replace(
