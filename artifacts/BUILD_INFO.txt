@@ -1,0 +1,4 @@
+source_commit=b2c070d1cfe49f10e055a5995a1d2d9e4f83122f
+source_branch=codex/android-software-decode-stable
+workflow=explicit-android-software-decode
+base_native_jar_sha256=dadc3e5ad87fd703567c2fc0cd492a886e0c6388d1c574978517169b24a9b607
