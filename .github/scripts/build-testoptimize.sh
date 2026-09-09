@@ -167,6 +167,11 @@ git switch --orphan testoptimize-build
 git rm -rf . >/dev/null 2>&1 || true
 mkdir -p artifacts
 cp "$staged"/* artifacts/
+# Keep UTF-8 transfer chunks beside the binary so repository connectors can move the exact
+# content into KiraziumLauncher without altering the JAR. They are build artifacts, not runtime files.
+mkdir -p artifacts/transfer
+base64 -w 0 "artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar" | \
+  split -b 1000000 -d -a 3 - artifacts/transfer/dreamdisplays.jar.b64.part-
 printf 'source_commit=%s\nsource_branch=testoptimize\nworkflow=testoptimize\ndecode=software\nbase_native_jar_sha256=%s\noptimizations=duplicate-load-dedupe,android-init-cap,audio-warm-pool-off,bounded-discard-workers,decoder-progress-watchdog,pre-roll-safe-startup\nwatchdog_android_ms=stall:15000,startup-progress:20000,startup-hard:45000\n' \
   "$GITHUB_SHA" "$BASE_ANDROID10_JAR_SHA256" > artifacts/BUILD_INFO.txt
 git add artifacts
