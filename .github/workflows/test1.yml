@@ -32,3 +32,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/build-test1.sh
+
+      - name: Upload verified TEST1 sync-gate JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamdisplays-android-syncgate1-test1
+          path: ${{ runner.temp }}/testoptimize-output/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-syncgate1.jar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
