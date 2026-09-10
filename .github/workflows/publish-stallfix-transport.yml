@@ -1,4 +1,4 @@
-name: Build exact runtime overlay
+name: Build compact runtime-identical patch
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  overlay:
+  compact:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -21,9 +21,11 @@ jobs:
           ref: testoptimize-build
           path: verified
 
-      - name: Build and verify runtime-identical overlay against public Android9 base
+      - name: Build compact per-entry patch and prove runtime identity
         run: |
           set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bsdiff
           BASE="$RUNNER_TEMP/android9-base.jar"
           TARGET="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
           BASE_URL='https://raw.githubusercontent.com/skynecos/KiraziumLauncher/dreamdisplays-android9-build/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android9.jar'
@@ -34,78 +36,117 @@ jobs:
           test "$(sha256sum "$TARGET" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
 
           python3 - "$BASE" "$TARGET" "$RUNNER_TEMP" <<'PY'
-          import hashlib, io, json, pathlib, shutil, sys, zipfile
+          import hashlib, json, pathlib, shutil, subprocess, sys, tempfile, zipfile
           base_p, target_p, out_p = map(pathlib.Path, sys.argv[1:])
-          root = out_p / 'overlay-work'
+          root = out_p / 'compact-work'
           shutil.rmtree(root, ignore_errors=True)
-          overlay_dir = root / 'overlay'
-          rebuilt_dir = root / 'rebuilt'
-          overlay_dir.mkdir(parents=True)
-          rebuilt_dir.mkdir(parents=True)
+          root.mkdir(parents=True)
+          payload_dir = root / 'payloads'
+          payload_dir.mkdir()
 
-          def entries(path):
+          def read_map(path):
               with zipfile.ZipFile(path) as z:
-                  result = {}
-                  for info in z.infolist():
-                      if info.is_dir():
-                          continue
-                      data = z.read(info.filename)
-                      result[info.filename] = hashlib.sha256(data).hexdigest()
-                  return result
+                  return {i.filename:z.read(i.filename) for i in z.infolist() if not i.is_dir()}
+          def sha(data): return hashlib.sha256(data).hexdigest()
 
-          b = entries(base_p); t = entries(target_p)
-          changed = sorted(k for k,v in t.items() if b.get(k) != v)
-          deleted = sorted(k for k in b if k not in t)
-          with zipfile.ZipFile(target_p) as zt, zipfile.ZipFile(root/'overlay.zip','w',zipfile.ZIP_DEFLATED,compresslevel=9) as zo:
-              for name in changed:
-                  zo.writestr(name, zt.read(name))
-          (root/'delete.txt').write_text('\n'.join(deleted) + ('\n' if deleted else ''), encoding='utf-8')
+          base = read_map(base_p)
+          target = read_map(target_p)
+          changed = sorted(k for k,v in target.items() if base.get(k) != v)
+          deleted = sorted(k for k in base if k not in target)
+          signatures = [n for n in target if n.upper().startswith('META-INF/') and n.upper().endswith(('.SF','.RSA','.DSA','.EC'))]
+          assert not signatures, f'Signed JAR unsupported for repack: {signatures}'
 
-          with zipfile.ZipFile(base_p) as zb:
-              zb.extractall(rebuilt_dir)
-          for name in deleted:
-              p = rebuilt_dir/name
-              if p.exists(): p.unlink()
-          with zipfile.ZipFile(root/'overlay.zip') as zo:
-              zo.extractall(rebuilt_dir)
-          rebuilt = root/'rebuilt.jar'
-          with zipfile.ZipFile(rebuilt,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as zr:
-              for p in sorted(x for x in rebuilt_dir.rglob('*') if x.is_file()):
-                  zr.write(p, p.relative_to(rebuilt_dir).as_posix())
+          ops=[]
+          patch_bytes=0
+          full_bytes=0
+          with tempfile.TemporaryDirectory() as td:
+              td=pathlib.Path(td)
+              for idx,name in enumerate(changed):
+                  tdata=target[name]
+                  payload=f'{idx:04d}.bin'
+                  mode='full'
+                  pdata=tdata
+                  if name in base:
+                      bp,tp,pp=td/'base',td/'target',td/'patch'
+                      bp.write_bytes(base[name]); tp.write_bytes(tdata)
+                      subprocess.run(['bsdiff',str(bp),str(tp),str(pp)],check=True)
+                      candidate=pp.read_bytes()
+                      if len(candidate) < len(tdata):
+                          mode='bsdiff'; pdata=candidate
+                  (payload_dir/payload).write_bytes(pdata)
+                  if mode=='bsdiff': patch_bytes += len(pdata)
+                  else: full_bytes += len(pdata)
+                  ops.append({'name':name,'mode':mode,'payload':payload,'target_sha256':sha(tdata),'target_size':len(tdata)})
 
-          r = entries(rebuilt)
-          assert r == t, f'Runtime entry mismatch: rebuilt={len(r)} target={len(t)}'
-          metrics = {
+          manifest={
+              'format':1,
               'base_url':'https://raw.githubusercontent.com/skynecos/KiraziumLauncher/dreamdisplays-android9-build/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android9.jar',
               'base_sha256':'9525319933e1fb629cd151b37326e7dbba88286a1db3d742dba7277d4070f935',
               'base_size':23437862,
-              'tested_target_sha256':'918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1',
-              'tested_target_size':23595235,
-              'changed_entries':len(changed),
-              'deleted_entries':len(deleted),
-              'overlay_size':(root/'overlay.zip').stat().st_size,
-              'rebuilt_sha256':hashlib.sha256(rebuilt.read_bytes()).hexdigest(),
-              'rebuilt_size':rebuilt.stat().st_size,
+              'tested_target_container_sha256':'918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1',
+              'tested_target_container_size':23595235,
+              'target_entries':{k:{'sha256':sha(v),'size':len(v)} for k,v in sorted(target.items())},
+              'deleted':deleted,
+              'ops':ops,
           }
-          (root/'META.json').write_text(json.dumps(metrics,indent=2)+'\n', encoding='utf-8')
-          print(json.dumps(metrics, indent=2))
+          (root/'manifest.json').write_text(json.dumps(manifest,separators=(',',':'),ensure_ascii=True),encoding='utf-8')
+
+          bundle=root/'runtime-patch.zip'
+          with zipfile.ZipFile(bundle,'w') as z:
+              z.write(root/'manifest.json','manifest.json',compress_type=zipfile.ZIP_DEFLATED,compresslevel=9)
+              for p in sorted(payload_dir.iterdir()):
+                  z.write(p,'payloads/'+p.name,compress_type=zipfile.ZIP_STORED)
+
+          # Reconstruct entry map using only public base + compact bundle, then compare every entry.
+          rebuilt=dict(base)
+          with zipfile.ZipFile(bundle) as z, tempfile.TemporaryDirectory() as td2:
+              td2=pathlib.Path(td2)
+              m=json.loads(z.read('manifest.json'))
+              for name in m['deleted']: rebuilt.pop(name,None)
+              for op in m['ops']:
+                  pdata=z.read('payloads/'+op['payload'])
+                  if op['mode']=='full': out=pdata
+                  else:
+                      bp,pp,rp=td2/'base',td2/'patch',td2/'result'
+                      bp.write_bytes(rebuilt[op['name']]); pp.write_bytes(pdata)
+                      subprocess.run(['bspatch',str(bp),str(rp),str(pp)],check=True)
+                      out=rp.read_bytes()
+                  assert len(out)==op['target_size'] and sha(out)==op['target_sha256']
+                  rebuilt[op['name']]=out
+          assert set(rebuilt)==set(target)
+          for name,data in target.items():
+              assert sha(rebuilt[name])==sha(data) and len(rebuilt[name])==len(data), name
+
+          metrics={
+              'changed_entries':len(changed),'deleted_entries':len(deleted),
+              'patch_mode_entries':sum(o['mode']=='bsdiff' for o in ops),
+              'full_mode_entries':sum(o['mode']=='full' for o in ops),
+              'raw_bsdiff_payload_bytes':patch_bytes,'raw_full_payload_bytes':full_bytes,
+              'bundle_size':bundle.stat().st_size,
+              'runtime_entries_verified':len(target),
+              'tested_target_container_sha256':'918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
+          }
+          (root/'META.json').write_text(json.dumps(metrics,indent=2)+'\n',encoding='utf-8')
+          print(json.dumps(metrics,indent=2))
           PY
 
-          mkdir -p "$RUNNER_TEMP/overlay-transfer"
-          cp "$RUNNER_TEMP/overlay-work/META.json" "$RUNNER_TEMP/overlay-transfer/"
-          cp "$RUNNER_TEMP/overlay-work/delete.txt" "$RUNNER_TEMP/overlay-transfer/"
-          base64 -w 0 "$RUNNER_TEMP/overlay-work/overlay.zip" | split -b 6000 -d -a 3 - "$RUNNER_TEMP/overlay-transfer/overlay.zip.b64.part-"
-          printf 'parts=%s\n' "$(find "$RUNNER_TEMP/overlay-transfer" -name 'overlay.zip.b64.part-*' | wc -l)" >> "$RUNNER_TEMP/overlay-transfer/PARTS.txt"
+          mkdir -p "$RUNNER_TEMP/compact-transfer"
+          cp "$RUNNER_TEMP/compact-work/META.json" "$RUNNER_TEMP/compact-transfer/"
+          base64 -w 0 "$RUNNER_TEMP/compact-work/runtime-patch.zip" | split -b 4000 -d -a 3 - "$RUNNER_TEMP/compact-transfer/runtime-patch.zip.b64.part-"
+          printf 'parts=%s\nbundle_sha256=%s\nbundle_size=%s\n' \
+            "$(find "$RUNNER_TEMP/compact-transfer" -name 'runtime-patch.zip.b64.part-*' | wc -l)" \
+            "$(sha256sum "$RUNNER_TEMP/compact-work/runtime-patch.zip" | awk '{print $1}')" \
+            "$(stat -c '%s' "$RUNNER_TEMP/compact-work/runtime-patch.zip")" > "$RUNNER_TEMP/compact-transfer/PARTS.txt"
 
-      - name: Publish verified overlay branch
+      - name: Publish compact verified patch branch
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/verified"
-          git switch --orphan testoptimize-overlay-build
+          git switch --orphan testoptimize-compact-build
           git rm -rf . >/dev/null 2>&1 || true
           mkdir -p artifacts
-          cp "$RUNNER_TEMP/overlay-transfer"/* artifacts/
+          cp "$RUNNER_TEMP/compact-transfer"/* artifacts/
           git add artifacts
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m 'build: runtime-identical stallfix1 overlay'
-          git push --force origin HEAD:refs/heads/testoptimize-overlay-build
+            commit -m 'build: compact runtime-identical stallfix1 patch'
+          git push --force origin HEAD:refs/heads/testoptimize-compact-build
