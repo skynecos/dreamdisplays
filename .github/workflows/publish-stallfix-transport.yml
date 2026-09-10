@@ -1,4 +1,4 @@
-name: Publish verified stallfix transport
+name: Build exact stallfix delta
 
 on:
   push:
@@ -8,12 +8,12 @@ on:
       - ".github/workflows/publish-stallfix-transport.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  transport:
+  delta:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout private verified build branch
         uses: actions/checkout@v4
@@ -29,20 +29,58 @@ jobs:
           test "$(stat -c '%s' "$JAR")" = "23595235"
           test "$(sha256sum "$JAR" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
 
-      - name: Upload verified JAR to transport endpoint
+      - name: Build and verify binary delta against official 1.9.5
         run: |
           set -euo pipefail
-          JAR="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
-          URL="$(curl --fail --silent --show-error --location \
-            -F 'reqtype=fileupload' \
-            -F "fileToUpload=@${JAR};type=application/java-archive" \
-            https://catbox.moe/user/api.php)"
-          case "$URL" in
-            https://files.catbox.moe/*) ;;
-            *) echo "::error::Unexpected transport response: $URL"; exit 1 ;;
-          esac
-          echo "TRANSPORT_URL=$URL"
-          curl --fail --silent --show-error --location "$URL" -o "$RUNNER_TEMP/roundtrip.jar"
-          test "$(stat -c '%s' "$RUNNER_TEMP/roundtrip.jar")" = "23595235"
-          test "$(sha256sum "$RUNNER_TEMP/roundtrip.jar" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
-          echo "TRANSPORT_VERIFIED=1"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bsdiff
+          BASE="$RUNNER_TEMP/official.jar"
+          TARGET="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
+          urls=(
+            'https://mediafilez.forgecdn.net/files/8743/085/dreamdisplays-fabric-26.1.2-1.9.5.jar'
+            'https://www.cursemaven.com/curse/maven/dreamdisplays-1411563/8743085/dreamdisplays-1411563-8743085.jar'
+          )
+          ok=0
+          for url in "${urls[@]}"; do
+            if curl --fail --location --retry 2 --silent --show-error "$url" -o "$BASE" && test -s "$BASE" && jar tf "$BASE" >/dev/null 2>&1; then
+              ok=1
+              echo "BASE_URL=$url"
+              break
+            fi
+          done
+          test "$ok" = 1
+          echo "BASE_SIZE=$(stat -c '%s' "$BASE")"
+          echo "BASE_SHA256=$(sha256sum "$BASE" | awk '{print $1}')"
+          bsdiff "$BASE" "$TARGET" "$RUNNER_TEMP/stallfix1.bsdiff"
+          bspatch "$BASE" "$RUNNER_TEMP/reconstructed.jar" "$RUNNER_TEMP/stallfix1.bsdiff"
+          test "$(stat -c '%s' "$RUNNER_TEMP/reconstructed.jar")" = "23595235"
+          test "$(sha256sum "$RUNNER_TEMP/reconstructed.jar" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
+          echo "DELTA_SIZE=$(stat -c '%s' "$RUNNER_TEMP/stallfix1.bsdiff")"
+          mkdir -p "$RUNNER_TEMP/delta-transfer"
+          base64 -w 0 "$RUNNER_TEMP/stallfix1.bsdiff" | split -b 200000 -d -a 3 - "$RUNNER_TEMP/delta-transfer/stallfix1.bsdiff.b64.part-"
+          printf 'target_sha256=%s\ntarget_size=%s\nbase_sha256=%s\nbase_size=%s\n' \
+            '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1' \
+            '23595235' \
+            "$(sha256sum "$BASE" | awk '{print $1}')" \
+            "$(stat -c '%s' "$BASE")" > "$RUNNER_TEMP/delta-transfer/META.txt"
+          printf 'parts=%s\ndelta_size=%s\n' \
+            "$(find "$RUNNER_TEMP/delta-transfer" -name 'stallfix1.bsdiff.b64.part-*' | wc -l)" \
+            "$(stat -c '%s' "$RUNNER_TEMP/stallfix1.bsdiff")" >> "$RUNNER_TEMP/delta-transfer/META.txt"
+
+      - name: Publish delta transfer branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/delta-branch"
+          git clone --no-checkout "https://github.com/${GITHUB_REPOSITORY}.git" "$out"
+          cd "$out"
+          git switch --orphan testoptimize-delta-build
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p artifacts
+          cp "$RUNNER_TEMP/delta-transfer"/* artifacts/
+          git add artifacts
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'build: exact stallfix1 binary delta'
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/testoptimize-delta-build
