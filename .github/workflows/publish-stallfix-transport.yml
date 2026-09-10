@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
 
+# One-shot transport for the exact phone-tested Kirazium stallfix binary.
 jobs:
   publish:
     runs-on: ubuntu-22.04
