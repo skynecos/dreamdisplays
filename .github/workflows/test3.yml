@@ -1,0 +1,49 @@
+name: test3
+
+on:
+  push:
+    branches:
+      - test3
+    paths:
+      - '.github/workflows/test3.yml'
+      - '.github/scripts/build-test3.sh'
+      - '.github/scripts/apply-test3-latedrop.py'
+      - '.github/scripts/apply-test1-syncgate.py'
+      - '.github/scripts/build-testoptimize.sh'
+      - '.github/scripts/apply-testoptimize.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test3-source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact isolated TEST3 source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Build and verify TEST3 smart late-frame JAR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/build-test3.sh
+
+      - name: Upload verified TEST3 smart late-frame JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamdisplays-android-syncgate1-smartdrop1-test3
+          path: ${{ runner.temp }}/testoptimize-output/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-syncgate1-smartdrop1.jar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
