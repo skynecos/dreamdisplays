@@ -1,4 +1,4 @@
-name: Transfer stallfix to launcher
+name: Publish verified stallfix transport
 
 on:
   push:
@@ -8,10 +8,10 @@ on:
       - ".github/workflows/publish-stallfix-transport.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  transfer:
+  transport:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -29,23 +29,20 @@ jobs:
           test "$(stat -c '%s' "$JAR")" = "23595235"
           test "$(sha256sum "$JAR" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
 
-      - name: Copy verified JAR into launcher source and push
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Upload verified JAR to transport endpoint
         run: |
           set -euo pipefail
           JAR="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
-          TARGET="app_pojavlauncher/src/main/assets/kirazium/mods/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
-          git clone --depth 1 --branch codex/embedded-ffmpeg-single-apk \
-            https://github.com/skynecos/KiraziumLauncher.git "$GITHUB_WORKSPACE/launcher"
-          cd "$GITHUB_WORKSPACE/launcher"
-          mkdir -p "$(dirname "$TARGET")"
-          cp "$JAR" "$TARGET"
-          test "$(stat -c '%s' "$TARGET")" = "23595235"
-          test "$(sha256sum "$TARGET" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
-          git add "$TARGET"
-          git -c user.name='github-actions[bot]' \
-              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -m 'build: embed verified DreamDisplays stallfix1'
-          git push "https://x-access-token:${GH_TOKEN}@github.com/skynecos/KiraziumLauncher.git" \
-            HEAD:refs/heads/codex/embedded-ffmpeg-single-apk
+          URL="$(curl --fail --silent --show-error --location \
+            -F 'reqtype=fileupload' \
+            -F "fileToUpload=@${JAR};type=application/java-archive" \
+            https://catbox.moe/user/api.php)"
+          case "$URL" in
+            https://files.catbox.moe/*) ;;
+            *) echo "::error::Unexpected transport response: $URL"; exit 1 ;;
+          esac
+          echo "TRANSPORT_URL=$URL"
+          curl --fail --silent --show-error --location "$URL" -o "$RUNNER_TEMP/roundtrip.jar"
+          test "$(stat -c '%s' "$RUNNER_TEMP/roundtrip.jar")" = "23595235"
+          test "$(sha256sum "$RUNNER_TEMP/roundtrip.jar" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
+          echo "TRANSPORT_VERIFIED=1"
