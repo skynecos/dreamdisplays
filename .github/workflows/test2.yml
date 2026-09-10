@@ -1,0 +1,44 @@
+name: test2
+
+on:
+  push:
+    branches:
+      - test2
+    paths:
+      - '.github/workflows/test2.yml'
+      - '.github/scripts/build-test2.sh'
+      - '.github/scripts/apply-test2-mobile720p30.py'
+      - '.github/scripts/apply-test1-syncgate.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-test2-source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout isolated test2 source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Build and verify TEST2 Android 720p30 JAR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/build-test2.sh
+
+      - name: Upload verified TEST2 Android 720p30 JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamdisplays-android-syncgate1-mobile720p30-test2
+          path: ${{ runner.temp }}/testoptimize-output/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-syncgate1-mobile720p30.jar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
