@@ -1,0 +1,7 @@
+source_commit=ff47261efc04b546b5a4af1c1c58cc0abcf8d5b5
+source_branch=test1
+workflow=test1
+decode=software
+base_native_jar_sha256=dadc3e5ad87fd703567c2fc0cd492a886e0c6388d1c574978517169b24a9b607
+optimizations=duplicate-load-dedupe,android-init-cap,audio-warm-pool-off,bounded-discard-workers,decoder-progress-watchdog,pre-roll-safe-startup,initial-authoritative-sync-gate
+watchdog_android_ms=stall:15000,startup-progress:20000,startup-hard:45000
