@@ -1,0 +1,7 @@
+source_commit=dab435bdd9c12cc86e9f79f7bc94d6962c398d70
+source_branch=testoptimize
+workflow=testoptimize
+decode=software
+base_native_jar_sha256=dadc3e5ad87fd703567c2fc0cd492a886e0c6388d1c574978517169b24a9b607
+optimizations=duplicate-load-dedupe,android-init-cap,audio-warm-pool-off,bounded-discard-workers,decoder-progress-watchdog,pre-roll-safe-startup
+watchdog_android_ms=stall:15000,startup-progress:20000,startup-hard:45000
