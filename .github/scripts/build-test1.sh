@@ -36,9 +36,13 @@ if version_hits < 3:
     raise SystemExit(f"TEST1: suspicious stallfix1 version anchor count: {version_hits}")
 text = text.replace(old_version, new_version)
 
-if text.count("testoptimize-build") != 1:
-    raise SystemExit("TEST1: expected exactly one testoptimize-build output ref")
-text = text.replace("testoptimize-build", "test1-build", 1)
+# The base build script references its output branch twice: once when creating
+# the orphan branch and once when pushing it. Both must move together so TEST1
+# never writes to the existing testoptimize-build branch.
+output_branch_hits = text.count("testoptimize-build")
+if output_branch_hits != 2:
+    raise SystemExit(f"TEST1: expected exactly two testoptimize-build output refs, found {output_branch_hits}")
+text = text.replace("testoptimize-build", "test1-build")
 
 if "source_branch=testoptimize" not in text or "workflow=testoptimize" not in text:
     raise SystemExit("TEST1: BUILD_INFO source/workflow anchors missing")
