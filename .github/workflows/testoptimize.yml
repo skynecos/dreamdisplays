@@ -33,7 +33,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dreamdisplays-android-stallfix1
-          path: artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar
+          path: ${{ runner.temp }}/testoptimize-output/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
