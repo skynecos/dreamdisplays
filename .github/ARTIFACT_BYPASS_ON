@@ -1,0 +1,2 @@
+Artifact upload bypass is enabled for the testoptimize pipeline.
+The verified stallfix JAR is published to the testoptimize-build branch; GitHub Actions artifact quota failures should not block the workflow.
