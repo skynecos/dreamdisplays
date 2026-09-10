@@ -1,0 +1,11 @@
+{
+  "changed_entries": 140,
+  "deleted_entries": 0,
+  "patch_mode_entries": 107,
+  "full_mode_entries": 33,
+  "raw_bsdiff_payload_bytes": 88983,
+  "raw_full_payload_bytes": 224705,
+  "bundle_size": 804397,
+  "runtime_entries_verified": 8992,
+  "tested_target_container_sha256": "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
+}
