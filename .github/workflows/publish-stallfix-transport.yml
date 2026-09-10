@@ -24,16 +24,16 @@ jobs:
       - name: Verify exact stallfix JAR
         run: |
           set -euo pipefail
-          JAR="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
-          test -s "$JAR"
-          test "$(stat -c '%s' "$JAR")" = "23595235"
-          test "$(sha256sum "$JAR" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
+          TARGET="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
+          test -s "$TARGET"
+          test "$(stat -c '%s' "$TARGET")" = '23595235'
+          test "$(sha256sum "$TARGET" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
 
-      - name: Build and verify exact delta against public Android9 base
+      - name: Build and verify smallest exact delta against public Android9 base
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq bsdiff
+          sudo apt-get install -y -qq bsdiff xdelta3 zstd
           BASE="$RUNNER_TEMP/android9-base.jar"
           TARGET="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
           BASE_URL='https://raw.githubusercontent.com/skynecos/KiraziumLauncher/dreamdisplays-android9-build/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android9.jar'
@@ -43,19 +43,37 @@ jobs:
           test "$(stat -c '%s' "$BASE")" = '23437862'
           test "$(sha256sum "$BASE" | awk '{print $1}')" = '9525319933e1fb629cd151b37326e7dbba88286a1db3d742dba7277d4070f935'
 
-          bsdiff "$BASE" "$TARGET" "$RUNNER_TEMP/stallfix1.bsdiff"
-          bspatch "$BASE" "$RUNNER_TEMP/reconstructed.jar" "$RUNNER_TEMP/stallfix1.bsdiff"
-          test "$(stat -c '%s' "$RUNNER_TEMP/reconstructed.jar")" = '23595235'
-          test "$(sha256sum "$RUNNER_TEMP/reconstructed.jar" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
+          bsdiff "$BASE" "$TARGET" "$RUNNER_TEMP/patch.bsdiff"
+          bspatch "$BASE" "$RUNNER_TEMP/rebuilt-bsdiff.jar" "$RUNNER_TEMP/patch.bsdiff"
+          test "$(sha256sum "$RUNNER_TEMP/rebuilt-bsdiff.jar" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
 
-          PATCH_SIZE="$(stat -c '%s' "$RUNNER_TEMP/stallfix1.bsdiff")"
-          echo "PATCH_SIZE=$PATCH_SIZE"
+          xdelta3 -e -s "$BASE" "$TARGET" "$RUNNER_TEMP/patch.xdelta3"
+          xdelta3 -d -s "$BASE" "$RUNNER_TEMP/patch.xdelta3" "$RUNNER_TEMP/rebuilt-xdelta.jar"
+          test "$(sha256sum "$RUNNER_TEMP/rebuilt-xdelta.jar" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
+
+          zstd -q -f --patch-from="$BASE" "$TARGET" -o "$RUNNER_TEMP/patch.zst"
+          zstd -q -d -f --patch-from="$BASE" "$RUNNER_TEMP/patch.zst" -o "$RUNNER_TEMP/rebuilt-zstd.jar"
+          test "$(sha256sum "$RUNNER_TEMP/rebuilt-zstd.jar" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
+
+          BSDIFF_SIZE="$(stat -c '%s' "$RUNNER_TEMP/patch.bsdiff")"
+          XDELTA_SIZE="$(stat -c '%s' "$RUNNER_TEMP/patch.xdelta3")"
+          ZSTD_SIZE="$(stat -c '%s' "$RUNNER_TEMP/patch.zst")"
+          echo "BSDIFF_SIZE=$BSDIFF_SIZE"
+          echo "XDELTA_SIZE=$XDELTA_SIZE"
+          echo "ZSTD_SIZE=$ZSTD_SIZE"
+
+          METHOD=bsdiff
+          PATCH="$RUNNER_TEMP/patch.bsdiff"
+          if [ "$XDELTA_SIZE" -lt "$(stat -c '%s' "$PATCH")" ]; then METHOD=xdelta3; PATCH="$RUNNER_TEMP/patch.xdelta3"; fi
+          if [ "$ZSTD_SIZE" -lt "$(stat -c '%s' "$PATCH")" ]; then METHOD=zstd; PATCH="$RUNNER_TEMP/patch.zst"; fi
+          PATCH_SIZE="$(stat -c '%s' "$PATCH")"
+
           rm -rf "$RUNNER_TEMP/delta-transfer"
           mkdir -p "$RUNNER_TEMP/delta-transfer"
-          base64 -w 0 "$RUNNER_TEMP/stallfix1.bsdiff" | split -b 30000 -d -a 3 - "$RUNNER_TEMP/delta-transfer/stallfix1.patch.b64.part-"
+          base64 -w 0 "$PATCH" | split -b 10000 -d -a 3 - "$RUNNER_TEMP/delta-transfer/stallfix1.patch.b64.part-"
           PARTS="$(find "$RUNNER_TEMP/delta-transfer" -name 'stallfix1.patch.b64.part-*' | wc -l)"
-          printf 'method=bsdiff\nbase_url=%s\nbase_sha256=%s\nbase_size=%s\ntarget_sha256=%s\ntarget_size=%s\npatch_size=%s\nparts=%s\n' \
-            "$BASE_URL" \
+          printf 'method=%s\nbase_url=%s\nbase_sha256=%s\nbase_size=%s\ntarget_sha256=%s\ntarget_size=%s\npatch_size=%s\nparts=%s\n' \
+            "$METHOD" "$BASE_URL" \
             '9525319933e1fb629cd151b37326e7dbba88286a1db3d742dba7277d4070f935' \
             '23437862' \
             '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1' \
@@ -72,5 +90,5 @@ jobs:
           git add artifacts
           git -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -m 'build: exact stallfix1 delta from public android9 base'
+              commit -m 'build: smallest exact stallfix1 delta from public android9 base'
           git push --force origin HEAD:refs/heads/testoptimize-delta-build
