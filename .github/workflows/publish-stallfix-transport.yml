@@ -1,4 +1,4 @@
-name: Publish stallfix transport
+name: Transfer stallfix to launcher
 
 on:
   push:
@@ -10,9 +10,8 @@ on:
 permissions:
   contents: write
 
-# One-shot transport for the exact phone-tested Kirazium stallfix binary.
 jobs:
-  publish:
+  transfer:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -30,61 +29,23 @@ jobs:
           test "$(stat -c '%s' "$JAR")" = "23595235"
           test "$(sha256sum "$JAR" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
 
-      - name: Publish unlisted Modrinth transport version
-        env:
-          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "${MODRINTH_TOKEN:-}"
-          JAR="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
-          VERSION_NUMBER="1.9.5-kirazium-android-stallfix1-transport-${GITHUB_SHA::8}"
-          DATA=$(python3 - "$VERSION_NUMBER" <<'PY'
-          import json, sys
-          print(json.dumps({
-              "name": "Kirazium Android Stallfix1 Transport",
-              "version_number": sys.argv[1],
-              "version_type": "alpha",
-              "loaders": ["fabric"],
-              "featured": False,
-              "status": "unlisted",
-              "project_id": "dreamdisplays",
-              "file_parts": ["file"],
-              "primary_file": "file",
-              "game_versions": ["26.1.2"],
-              "environment": "client_and_server",
-              "changelog": "Kirazium launcher verified binary transport."
-          }))
-          PY
-          )
-          http=$(curl --silent --show-error --location \
-            --output "$RUNNER_TEMP/modrinth-response.json" \
-            --write-out '%{http_code}' \
-            -X POST 'https://api.modrinth.com/v2/version' \
-            -H "Authorization: $MODRINTH_TOKEN" \
-            -H 'User-Agent: KiraziumLauncher/1.0 (github.com/skynecos/KiraziumLauncher)' \
-            -F "data=$DATA" \
-            -F "file=@$JAR;type=application/java-archive")
-          cat "$RUNNER_TEMP/modrinth-response.json"
-          test "$http" = "200"
-          python3 - "$RUNNER_TEMP/modrinth-response.json" "$RUNNER_TEMP/transport.txt" <<'PY'
-          import json, pathlib, sys
-          obj=json.load(open(sys.argv[1], encoding='utf-8'))
-          files=obj.get('files') or []
-          assert files and files[0].get('url')
-          url=files[0]['url']
-          vid=obj['id']
-          pathlib.Path(sys.argv[2]).write_text(f"version_id={vid}\nurl={url}\nsha256=918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1\nsize=23595235\n", encoding='utf-8')
-          PY
-
-      - name: Save transport metadata to verified build branch
+      - name: Copy verified JAR into launcher source and push
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE/verified"
-          cp "$RUNNER_TEMP/transport.txt" artifacts/MODRINTH_TRANSPORT.txt
-          git add artifacts/MODRINTH_TRANSPORT.txt
+          JAR="$GITHUB_WORKSPACE/verified/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
+          TARGET="app_pojavlauncher/src/main/assets/kirazium/mods/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-stallfix1.jar"
+          git clone --depth 1 --branch codex/embedded-ffmpeg-single-apk \
+            https://github.com/skynecos/KiraziumLauncher.git "$GITHUB_WORKSPACE/launcher"
+          cd "$GITHUB_WORKSPACE/launcher"
+          mkdir -p "$(dirname "$TARGET")"
+          cp "$JAR" "$TARGET"
+          test "$(stat -c '%s' "$TARGET")" = "23595235"
+          test "$(sha256sum "$TARGET" | awk '{print $1}')" = "918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1"
+          git add "$TARGET"
           git -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -m 'build: publish verified stallfix transport metadata'
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:testoptimize-build
+              commit -m 'build: embed verified DreamDisplays stallfix1'
+          git push "https://x-access-token:${GH_TOKEN}@github.com/skynecos/KiraziumLauncher.git" \
+            HEAD:refs/heads/codex/embedded-ffmpeg-single-apk
