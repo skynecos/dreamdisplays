@@ -29,6 +29,15 @@ if text.count(source_gate_anchor) != 1:
     raise SystemExit("TEST1: sync-gate apply anchor missing after insertion")
 text = text.replace(source_gate_anchor, source_gate_anchor + source_guards, 1)
 
+# TEST1 intentionally widens the proven duplicate-load guard so a duplicate packet is also
+# suppressed while the first player creation is waiting behind the sync gate. Replace only
+# that exact regression assertion; all other production regression checks remain untouched.
+old_dedupe_guard = '''grep -Fq 'current != null && screen.videoUrl == videoUrl && screen.lang == lang && !screen.errored' "$CONTROLLER"\n'''
+new_dedupe_guard = '''grep -Fq 'val pending = pendingInitialLoad' "$CONTROLLER"\ngrep -Fq '(current != null || pending != null) &&' "$CONTROLLER"\ngrep -Fq 'screen.videoUrl == videoUrl && screen.lang == lang && !screen.errored' "$CONTROLLER"\n'''
+if text.count(old_dedupe_guard) != 1:
+    raise SystemExit(f"TEST1: expected one production duplicate-load guard, found {text.count(old_dedupe_guard)}")
+text = text.replace(old_dedupe_guard, new_dedupe_guard, 1)
+
 old_version = "1.9.5-kirazium-android-stallfix1"
 new_version = "1.9.5-kirazium-android-syncgate1"
 version_hits = text.count(old_version)
