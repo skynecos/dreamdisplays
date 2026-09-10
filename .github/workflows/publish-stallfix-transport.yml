@@ -1,4 +1,4 @@
-name: Build exact stallfix delta blob
+name: Build exact stallfix transfer chunks
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
           ref: testoptimize-build
           path: verified
 
-      - name: Build and verify exact delta blob
+      - name: Build, reconstruct and split exact delta
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -35,31 +35,35 @@ jobs:
           test "$(stat -c '%s' "$TARGET")" = '23595235'
           test "$(sha256sum "$TARGET" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
           bsdiff "$BASE" "$TARGET" "$RUNNER_TEMP/stallfix1.bsdiff"
+          test "$(stat -c '%s' "$RUNNER_TEMP/stallfix1.bsdiff")" = '599883'
+          test "$(sha256sum "$RUNNER_TEMP/stallfix1.bsdiff" | awk '{print $1}')" = 'a21762440dbf525f9c6791883000924adbec21913f04479a2cfd43995e0039fb'
           bspatch "$BASE" "$RUNNER_TEMP/reconstructed.jar" "$RUNNER_TEMP/stallfix1.bsdiff"
           test "$(stat -c '%s' "$RUNNER_TEMP/reconstructed.jar")" = '23595235'
           test "$(sha256sum "$RUNNER_TEMP/reconstructed.jar" | awk '{print $1}')" = '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1'
+
+          rm -rf "$RUNNER_TEMP/transfer"
           mkdir -p "$RUNNER_TEMP/transfer"
-          base64 -w 0 "$RUNNER_TEMP/stallfix1.bsdiff" > "$RUNNER_TEMP/transfer/stallfix1.bsdiff.b64"
-          printf 'base_url=%s\nbase_sha256=%s\nbase_size=%s\ntarget_sha256=%s\ntarget_size=%s\npatch_sha256=%s\npatch_size=%s\nbase64_size=%s\n' \
+          base64 -w 0 "$RUNNER_TEMP/stallfix1.bsdiff" | fold -w 22000 > "$RUNNER_TEMP/transfer/stallfix1.bsdiff.b64.lines"
+          LINES="$(wc -l < "$RUNNER_TEMP/transfer/stallfix1.bsdiff.b64.lines")"
+          test "$LINES" = '37'
+          printf 'base_url=%s\nbase_sha256=%s\nbase_size=%s\ntarget_sha256=%s\ntarget_size=%s\npatch_sha256=%s\npatch_size=%s\nbase64_size=%s\nlines=%s\nline_width=%s\n' \
             "$BASE_URL" \
             '9525319933e1fb629cd151b37326e7dbba88286a1db3d742dba7277d4070f935' \
             '23437862' \
             '918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1' \
             '23595235' \
-            "$(sha256sum "$RUNNER_TEMP/stallfix1.bsdiff" | awk '{print $1}')" \
-            "$(stat -c '%s' "$RUNNER_TEMP/stallfix1.bsdiff")" \
-            "$(stat -c '%s' "$RUNNER_TEMP/transfer/stallfix1.bsdiff.b64")" \
-            > "$RUNNER_TEMP/transfer/META.txt"
+            'a21762440dbf525f9c6791883000924adbec21913f04479a2cfd43995e0039fb' \
+            '599883' '799844' "$LINES" '22000' > "$RUNNER_TEMP/transfer/META.txt"
 
-      - name: Publish verified delta blob branch
+      - name: Publish verified transfer branch
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/verified"
-          git switch --orphan testoptimize-delta-blob-build
+          git switch --orphan testoptimize-delta-lines-build
           git rm -rf . >/dev/null 2>&1 || true
           mkdir -p artifacts
           cp "$RUNNER_TEMP/transfer"/* artifacts/
           git add artifacts
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m 'build: exact stallfix1 delta base64 blob'
-          git push --force origin HEAD:refs/heads/testoptimize-delta-blob-build
+            commit -m 'build: exact stallfix1 delta safe transfer lines'
+          git push --force origin HEAD:refs/heads/testoptimize-delta-lines-build
