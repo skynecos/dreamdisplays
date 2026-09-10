@@ -1,0 +1,8 @@
+base_url=https://raw.githubusercontent.com/skynecos/KiraziumLauncher/dreamdisplays-android9-build/artifacts/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android9.jar
+base_sha256=9525319933e1fb629cd151b37326e7dbba88286a1db3d742dba7277d4070f935
+base_size=23437862
+target_sha256=918872694b9fe437b6c412dda287e717d33b654a1bf8885af0ceea0ed38caab1
+target_size=23595235
+patch_sha256=9ab36322a60647d7ff5ea25d416a6a315379b7d624e05bdd16836567517de9bd
+patch_size=599883
+base64_size=799844
