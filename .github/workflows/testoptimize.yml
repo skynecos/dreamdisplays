@@ -30,6 +30,7 @@ jobs:
         run: bash .github/scripts/build-testoptimize.sh
 
       - name: Upload verified stallfix JAR
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: dreamdisplays-android-stallfix1
