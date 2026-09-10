@@ -19,6 +19,16 @@ if text.count(anchor) != 1:
     raise SystemExit(f"TEST1: expected one apply-testoptimize anchor, found {text.count(anchor)}")
 text = text.replace(anchor, anchor + "python3 .github/scripts/apply-test1-syncgate.py\n", 1)
 
+source_gate_anchor = "python3 .github/scripts/apply-test1-syncgate.py\n"
+source_guards = r'''grep -Fq 'TEST1 initial timeline gate armed' "$CONTROLLER"
+grep -Fq 'initialStartPositionNanos: Long = -1L' "$PLAYER"
+grep -Fq 'releaseInitialTimelineLoad(positionNanos: Long)' platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/DisplayScreen.kt
+grep -Fq 'if (screen.releaseInitialTimelineLoad(projectedStartNanos)) return' platform/client/common/src/main/kotlin/com/dreamdisplays/platform/client/displays/TimelineFollower.kt
+'''
+if text.count(source_gate_anchor) != 1:
+    raise SystemExit("TEST1: sync-gate apply anchor missing after insertion")
+text = text.replace(source_gate_anchor, source_gate_anchor + source_guards, 1)
+
 old_version = "1.9.5-kirazium-android-stallfix1"
 new_version = "1.9.5-kirazium-android-syncgate1"
 version_hits = text.count(old_version)
@@ -42,6 +52,19 @@ text = text.replace(
     "commit -m 'build: testoptimize Android software JAR'",
     "commit -m 'build: test1 authoritative sync-gate Android software JAR'",
 )
+
+jar_copy_anchor = 'cp "$JAR" out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-syncgate1.jar\n'
+compiled_guards = r'''mkdir -p verify-jar-test1
+javap -classpath "$JAR" -p com.dreamdisplays.platform.client.displays.DisplayMediaController > verify-jar-test1/DisplayMediaController.txt
+javap -classpath "$JAR" -c -p com.dreamdisplays.platform.client.displays.TimelineFollower > verify-jar-test1/TimelineFollower.txt
+javap -classpath "$JAR" -p com.dreamdisplays.platform.client.displays.DisplayScreen > verify-jar-test1/DisplayScreen.txt
+grep -F 'releaseInitialTimeline' verify-jar-test1/DisplayMediaController.txt >/dev/null
+grep -F 'releaseInitialTimelineLoad' verify-jar-test1/DisplayScreen.txt >/dev/null
+grep -F 'releaseInitialTimelineLoad' verify-jar-test1/TimelineFollower.txt >/dev/null
+'''
+if text.count(jar_copy_anchor) != 1:
+    raise SystemExit(f"TEST1: built-JAR copy anchor mismatch: {text.count(jar_copy_anchor)}")
+text = text.replace(jar_copy_anchor, compiled_guards + jar_copy_anchor, 1)
 
 p.write_text(text)
 PY
