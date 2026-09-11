@@ -1,0 +1,42 @@
+name: mobilefix1
+
+on:
+  push:
+    branches:
+      - mobilefix1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-mobilefix1:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact mobilefix1 source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Build and fail-closed verify mobilefix1
+        run: bash .github/scripts/build-mobilefix1.sh
+
+      - name: Upload verified mobilefix1 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamdisplays-android-mobilefix1
+          path: |
+            out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-mobilefix1.jar
+            out/dreamdisplays-fabric-26.1.2-1.9.5-kirazium-android-mobilefix1.jar.sha256
+            out/BUILD_INFO-mobilefix1.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
