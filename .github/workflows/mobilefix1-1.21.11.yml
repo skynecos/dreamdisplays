@@ -1,0 +1,63 @@
+name: 1.21.11 workflow
+
+on:
+  push:
+    branches:
+      - mobilefix1-1.21.11
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-mobilefix1-1-21-11:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact mobilefix1 1.21.11 source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Build and fail-closed verify mobilefix1 1.21.11
+        run: bash .github/scripts/build-mobilefix1-1.21.11.sh
+
+      - name: Upload verified mobilefix1 1.21.11 candidate
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamdisplays-android-mobilefix1-1.21.11
+          path: |
+            out/dreamdisplays-fabric-1.21.11-1.9.5-kirazium-android-mobilefix1.jar
+            out/dreamdisplays-fabric-1.21.11-1.9.5-kirazium-android-mobilefix1.jar.sha256
+            out/BUILD_INFO-mobilefix1.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish verified JAR to persistent build branch
+        env:
+          TARGET_BRANCH: mobilefix1-1.21.11-build
+        run: |
+          set -euo pipefail
+          staged="$RUNNER_TEMP/mobilefix1-1.21.11-output"
+          mkdir -p "$staged"
+          cp out/dreamdisplays-fabric-1.21.11-1.9.5-kirazium-android-mobilefix1.jar "$staged/"
+          cp out/dreamdisplays-fabric-1.21.11-1.9.5-kirazium-android-mobilefix1.jar.sha256 "$staged/"
+          cp out/BUILD_INFO-mobilefix1.txt "$staged/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch --orphan "$TARGET_BRANCH"
+          git rm -rf .
+          mkdir -p artifacts
+          cp "$staged"/* artifacts/
+          git add artifacts
+          git commit -m "build(android): verified mobilefix1 1.21.11 JAR"
+          git push --force origin "HEAD:refs/heads/$TARGET_BRANCH"
