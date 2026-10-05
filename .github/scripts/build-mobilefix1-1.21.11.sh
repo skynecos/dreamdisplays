@@ -7,9 +7,9 @@ set -euo pipefail
 EXPECTED_BRANCH="mobilefix1-1.21.11"
 PINNED_LAUNCHER_COMMIT="e677674976ca27718ae00bfdc49ad08895ce1457"
 PINNED_NEWPIPE_COMMIT="93eb70b4e6ab3be9bc6f0b1b381e371ec6bcd3d9"
+PINNED_NEWPIPE_JAR_SHA256="c1bf3630f2af38c38a298dcbc04f82921b4ccb1101b862c8088024a67b07ecae"
 BASE_ANDROID10_JAR_SHA256="dadc3e5ad87fd703567c2fc0cd492a886e0c6388d1c574978517169b24a9b607"
 LAUNCHER="$RUNNER_TEMP/KiraziumLauncher-mobilefix1"
-NEWPIPE="$RUNNER_TEMP/NewPipeExtractor-mobilefix1-1.21.11"
 BASE_JAR="$RUNNER_TEMP/android10-base-mobilefix1.jar"
 PIPE="media/player/src/main/kotlin/com/dreamdisplays/media/player/pipeline/NativeVideoFramePipe.kt"
 PREBUFFER="media/player/src/main/kotlin/com/dreamdisplays/media/player/pipeline/FramePrebuffer.kt"
@@ -38,39 +38,16 @@ git -C "$LAUNCHER" checkout --quiet --detach "$PINNED_LAUNCHER_COMMIT"
 test "$(git -C "$LAUNCHER" rev-parse HEAD)" = "$PINNED_LAUNCHER_COMMIT"
 
 # JitPack no longer serves the historical NewPipe commit pinned by this source tree.
-# Build that exact commit locally, target Java 17 bytecode with the workflow JDK,
-# and redirect only this isolated checkout to the verified local publication.
-rm -rf "$NEWPIPE"
-git clone --quiet --no-checkout https://github.com/TeamNewPipe/NewPipeExtractor.git "$NEWPIPE"
-git -C "$NEWPIPE" fetch --quiet --depth 1 origin "$PINNED_NEWPIPE_COMMIT"
-git -C "$NEWPIPE" checkout --quiet --detach "$PINNED_NEWPIPE_COMMIT"
-test "$(git -C "$NEWPIPE" rev-parse HEAD)" = "$PINNED_NEWPIPE_COMMIT"
-chmod +x "$NEWPIPE/gradlew"
-python3 - "$NEWPIPE/build.gradle.kts" <<'PY'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-text = p.read_text()
-old = '''    tasks.withType<JavaCompile> {
-        options.encoding = Charsets.UTF_8.toString()
-    }
-'''
-new = '''    tasks.withType<JavaCompile> {
-        options.encoding = Charsets.UTF_8.toString()
-        options.release.set(17)
-    }
-'''
-if text.count(old) != 1:
-    raise SystemExit('Unexpected NewPipe JavaCompile block')
-text = text.replace(old, new, 1)
-old_toolchain = 'languageVersion.set(JavaLanguageVersion.of(17))'
-new_toolchain = 'languageVersion.set(JavaLanguageVersion.of(25))'
-if text.count(old_toolchain) != 1:
-    raise SystemExit('Unexpected NewPipe Java toolchain block')
-p.write_text(text.replace(old_toolchain, new_toolchain, 1))
-PY
-"$NEWPIPE/gradlew" -p "$NEWPIPE" :extractor:publishReleasePublicationToMavenLocal \
-  --no-daemon -x :extractor:javadoc
+# Install the exact, repository-pinned and hash-verified compile dependency into
+# Maven Local, preserving the original coordinate and transitive dependency POM.
+NEWPIPE_DEP_DIR="$HOME/.m2/repository/com/github/TeamNewPipe/NewPipeExtractor/$PINNED_NEWPIPE_COMMIT"
+NEWPIPE_JAR=".github/ci-deps/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.jar"
+NEWPIPE_POM=".github/ci-deps/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.pom"
+echo "$PINNED_NEWPIPE_JAR_SHA256  $NEWPIPE_JAR" | sha256sum -c -
+grep -Fq "<version>$PINNED_NEWPIPE_COMMIT</version>" "$NEWPIPE_POM"
+mkdir -p "$NEWPIPE_DEP_DIR"
+cp "$NEWPIPE_JAR" "$NEWPIPE_DEP_DIR/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.jar"
+cp "$NEWPIPE_POM" "$NEWPIPE_DEP_DIR/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.pom"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -82,12 +59,6 @@ def replace_once(path, old, new):
         raise SystemExit(f'Expected one build dependency anchor in {path}, found {text.count(old)}')
     p.write_text(text.replace(old, new, 1))
 
-replace_once('gradle/libs.versions.toml',
-             'newpipeExtractor = "93eb70b4e6ab3be9bc6f0b1b381e371ec6bcd3d9"',
-             'newpipeExtractor = "v0.26.5"')
-replace_once('gradle/libs.versions.toml',
-             'newpipeExtractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", version.ref = "newpipeExtractor" }',
-             'newpipeExtractor = { module = "net.newpipe:extractor", version.ref = "newpipeExtractor" }')
 for path in ('build.gradle.kts', 'platform/client/common/build.gradle.kts',
              'platform/client/fabric/build.gradle.kts'):
     replace_once(path, 'repositories {', 'repositories {\n    mavenLocal()')
