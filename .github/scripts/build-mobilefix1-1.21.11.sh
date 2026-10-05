@@ -52,6 +52,23 @@ cp "$NEWPIPE_POM" "$NEWPIPE_DEP_DIR/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.pom"
 
 python3 - <<'PY'
 from pathlib import Path
+p = Path('gradle.properties')
+lines = p.read_text().splitlines()
+lines = [('version=1.9.5' if line.startswith('version=') else line) for line in lines]
+p.write_text('\n'.join(lines) + '\n')
+PY
+
+# Reconstruct the exact Android compatibility chain used by stallfix1.
+for patch in apply-patches.py apply-android4.py apply-android5.py apply-android6.py apply-android7.py apply-android8.py apply-android9.py; do
+  cp "$LAUNCHER/tools/dreamdisplays-android/$patch" "./$patch"
+  python3 "./$patch"
+done
+
+# The pinned launcher patch chain restores build files and its source target (26.1.2).
+# Apply build-only dependency routing and select the client mapping after that chain,
+# matching the verified local build order.
+python3 - <<'PY'
+from pathlib import Path
 
 def replace_once(path, old, new):
     p = Path(path)
@@ -65,22 +82,6 @@ for path in ('build.gradle.kts', 'platform/client/common/build.gradle.kts',
     replace_once(path, 'repositories {', 'repositories {\n    mavenLocal()')
 PY
 
-python3 - <<'PY'
-from pathlib import Path
-p = Path('gradle.properties')
-lines = p.read_text().splitlines()
-lines = [('version=1.9.5' if line.startswith('version=') else line) for line in lines]
-p.write_text('\n'.join(lines) + '\n')
-PY
-
-# Reconstruct the exact Android compatibility chain used by stallfix1.
-for patch in apply-patches.py apply-android4.py apply-android5.py apply-android6.py apply-android7.py apply-android8.py apply-android9.py; do
-  cp "$LAUNCHER/tools/dreamdisplays-android/$patch" "./$patch"
-  python3 "./$patch"
-done
-
-# The pinned launcher patch chain restores its source target (26.1.2). Select
-# the requested client mapping only after that chain, matching the verified local build order.
 printf '1.21.11\n' > versions/active.txt
 
 # Keep the known-stable software decode policy. MediaCodec remains compiled but is never selected here.
