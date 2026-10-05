@@ -65,7 +65,6 @@ for path in ('build.gradle.kts', 'platform/client/common/build.gradle.kts',
     replace_once(path, 'repositories {', 'repositories {\n    mavenLocal()')
 PY
 
-printf '1.21.11\n' > versions/active.txt
 python3 - <<'PY'
 from pathlib import Path
 p = Path('gradle.properties')
@@ -79,6 +78,10 @@ for patch in apply-patches.py apply-android4.py apply-android5.py apply-android6
   cp "$LAUNCHER/tools/dreamdisplays-android/$patch" "./$patch"
   python3 "./$patch"
 done
+
+# The pinned launcher patch chain restores its source target (26.1.2). Select
+# the requested client mapping only after that chain, matching the verified local build order.
+printf '1.21.11\n' > versions/active.txt
 
 # Keep the known-stable software decode policy. MediaCodec remains compiled but is never selected here.
 python3 - <<'PY'
