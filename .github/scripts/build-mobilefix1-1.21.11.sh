@@ -40,8 +40,9 @@ test "$(git -C "$LAUNCHER" rev-parse HEAD)" = "$PINNED_LAUNCHER_COMMIT"
 
 # JitPack no longer serves the historical NewPipe commit pinned by this source tree.
 # Install the exact, repository-pinned and hash-verified compile dependency into
-# Maven Local, preserving the original coordinate and transitive dependency POM.
-NEWPIPE_DEP_DIR="$HOME/.m2/repository/com/github/TeamNewPipe/NewPipeExtractor/$PINNED_NEWPIPE_COMMIT"
+# a workspace-local Maven repository, preserving its coordinate and transitive dependency POM.
+NEWPIPE_REPO=".github/ci-maven"
+NEWPIPE_DEP_DIR="$NEWPIPE_REPO/com/github/TeamNewPipe/NewPipeExtractor/$PINNED_NEWPIPE_COMMIT"
 NEWPIPE_JAR=".github/ci-deps/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.jar"
 NEWPIPE_POM=".github/ci-deps/NewPipeExtractor-$PINNED_NEWPIPE_COMMIT.pom"
 echo "$PINNED_NEWPIPE_JAR_SHA256  $NEWPIPE_JAR" | sha256sum -c -
@@ -79,7 +80,11 @@ def replace_once(path, old, new):
 
 for path in ('build.gradle.kts', 'platform/client/common/build.gradle.kts',
              'platform/client/fabric/build.gradle.kts'):
-    replace_once(path, 'repositories {', 'repositories {\n    mavenLocal()')
+    replace_once(
+        path,
+        'repositories {',
+        'repositories {\n    maven { url = uri(rootProject.file(".github/ci-maven")) }',
+    )
 PY
 
 printf '1.21.11\n' > versions/active.txt
