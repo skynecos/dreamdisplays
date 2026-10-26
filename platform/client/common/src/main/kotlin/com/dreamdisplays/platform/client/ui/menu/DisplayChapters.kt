@@ -1,7 +1,7 @@
 package com.dreamdisplays.platform.client.ui.menu
 
-import com.dreamdisplays.api.media.service.keys.MediaServices
-import com.dreamdisplays.api.media.search.model.MediaChapter
+import com.dreamdisplays.core.services.keys.MediaServices
+import com.dreamdisplays.api.media.search.MediaChapter
 import com.dreamdisplays.media.source.youtube.cache.YouTubeChapterCache
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayScreen
@@ -14,11 +14,11 @@ object DisplayChapters {
     /** Chapters for [ds]'s current video, requesting them on first ask and empty until they arrive. */
     fun of(ds: DisplayScreen): List<MediaChapter> {
         val videoId = DreamServices.registry.getOrNull(MediaServices.SEARCH)?.extractVideoId(ds.videoUrl ?: "")
-            ?: return emptyList()
+            ?: return []
         val cached = YouTubeChapterCache.get(videoId)
         if (cached == null) {
             YouTubeChapterCache.requestAsync(videoId)
-            return emptyList()
+            return []
         }
         return cached
     }

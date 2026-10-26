@@ -1,6 +1,6 @@
 package com.dreamdisplays.platform.client.popout
 
-import com.dreamdisplays.api.media.sink.service.VideoFrameSink
+import com.dreamdisplays.api.media.sink.VideoFrameSink
 
 /**
  * Represents an open popout window. Provides properties for the window's status and dimensions, as well as methods to
@@ -25,7 +25,6 @@ interface PopoutWindow : AutoCloseable {
      */
     fun open(config: WindowConfig): VideoFrameSink
 
-    /** Closes the window. If the window is already closed, does nothing. May throw an exception if the window fails to close properly. */
     override fun close()
 
     /**

@@ -7,7 +7,7 @@ import com.dreamdisplays.api.playback.model.PlaybackMode
 import java.util.*
 
 /**
- * Display abstraction for [com.dreamdisplays.media.player.MediaPlayer]; platform-side implementation.
+ * Display abstraction for media player; platform-side implementation.
  *
  * @since 1.8.x
  */
@@ -30,6 +30,12 @@ interface PlaybackHost {
 
     /** Effective playback mode (Watch Party overrides the display's own mode). */
     val effectiveMode: PlaybackMode
+
+    /**
+     * False when a non-looping fullscreen mode should stop at the end of the VOD instead of
+     * restarting it; true everywhere else.
+     */
+    val shouldLoopOnEnd: Boolean
 
     /** Content aspect ratio of the resolved video; the player updates this on (re)resolve. */
     var videoContentAspect: Double

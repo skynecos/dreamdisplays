@@ -1,5 +1,8 @@
 package com.dreamdisplays.platform.server.commands.subcommands
 
+import com.dreamdisplays.shared.geometry.SurfaceCensus
+import com.dreamdisplays.shared.geometry.SurfaceRole
+import com.dreamdisplays.api.playback.model.DisplayAccess
 import com.dreamdisplays.platform.server.*
 import com.dreamdisplays.platform.server.datatypes.selection.PaperSelectionData
 import com.dreamdisplays.platform.server.datatypes.selection.VanillaSelectionData
@@ -7,20 +10,21 @@ import com.dreamdisplays.platform.server.managers.DisplayManager
 import com.dreamdisplays.platform.server.managers.SelectionManager
 import com.dreamdisplays.platform.server.meta.ServerCoroutines
 import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.RegionUtil
 import com.dreamdisplays.platform.server.utils.VanillaPermissions
+import com.dreamdisplays.platform.server.utils.WorldGuardRegions
 import com.dreamdisplays.platform.server.utils.net.VanillaPacketUtil
 import com.mojang.brigadier.context.CommandContext
 import io.github.arnodoelinger.platformweaver.PaperOnly
 import kotlinx.coroutines.launch
 import net.minecraft.commands.CommandSourceStack
 import net.minecraft.core.BlockPos
-import net.minecraft.core.Direction
 import net.minecraft.core.registries.BuiltInRegistries
 import net.minecraft.network.chat.Component
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
-import org.bukkit.block.BlockFace
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
 import kotlin.math.abs
@@ -30,14 +34,12 @@ import kotlin.math.abs
  * Also validates the player's current selection, enforces overlap and Y-range limits, and
  * registers the resulting display.
  */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @PaperOnly
 class CreateCommand : SubCommand {
     override val name = "create"
     override val permission = PaperServer.config.permissions.create
     override val playerOnly = true
 
-    /** Command execution logic. */
     override fun execute(sender: CommandSender, args: Array<String?>) {
         val player = (sender as? Player) ?: return
 
@@ -70,7 +72,7 @@ class CreateCommand : SubCommand {
         ) ?: return
 
         if (DisplayManager.isOverlaps(sel)) {
-            MessageUtil.sendMessage(player, "displayOverlap")
+            ServerMessage.DISPLAY_OVERLAP.sendTo(player)
             return
         }
 
@@ -78,21 +80,24 @@ class CreateCommand : SubCommand {
         if (maxDisplays > 0 && !player.hasPermission(PaperServer.config.permissions.createBypass) &&
             DisplayManager.countOwnedBy(player.uniqueId) >= maxDisplays
         ) {
-            MessageUtil.sendMessage(player, "displayLimitReached", maxDisplays)
+            ServerMessage.DISPLAY_LIMIT_REACHED.sendTo(player, maxDisplays)
             return
         }
 
         val displayData = sel.generateDisplayData()
+        val pos1 = sel.pos1
+        val pos2 = sel.pos2
+        if (pos1 != null && pos2 != null &&
+            (WorldGuardRegions.isProtectedTerritory(pos1) || WorldGuardRegions.isProtectedTerritory(pos2))
+        ) {
+            displayData.access = DisplayAccess.REGION
+        }
         SelectionManager.selectionPoints.remove(player.uniqueId)
 
         DisplayManager.register(displayData)
-        MessageUtil.sendMessage(player, "successfulCreation")
+        ServerMessage.SUCCESSFUL_CREATION.sendTo(player)
     }
 
-    /**
-     * Validates the player's current selection, enforces overlap and Y-range limits, and
-     * registers the resulting display.
-     */
     private fun validate(
         sel: PaperSelectionData,
         sendError: (String, Array<out Any>) -> Unit,
@@ -112,44 +117,45 @@ class CreateCommand : SubCommand {
 
         val region = RegionUtil.calculateRegion(pos1, pos2)
         val face = sel.getFace()
-        val isVertical = face == BlockFace.UP || face == BlockFace.DOWN
+        val (width, height, depth) = region.screenExtents(abs(face.modX), abs(face.modY), abs(face.modZ))
+        val surface = PaperSurfaces.of(PaperServer.config.settings.baseMaterial)
+        val world = pos1.world
+        val census = if (world == null) {
+            SurfaceCensus(foreign = 1)
+        } else {
+            var counted = SurfaceCensus()
+            for (x in region.minX..region.maxX) {
+                for (y in region.minY..region.maxY) {
+                    for (z in region.minZ..region.maxZ) {
+                        val type = world.getBlockAt(x, y, z).type
+                        val role = if (type.isAir) SurfaceRole.AIR else surface.role(type.name)
+                        counted = counted.add(role)
+                    }
+                }
+            }
+            counted
+        }
 
-        return validateRegion(
+        val conforming = validateRegion(
             minY = region.minY,
             maxY = region.maxY,
-            deltaX = region.deltaX,
-            deltaZ = region.deltaZ,
-            deltaY = region.deltaY,
-            faceModX = if (!isVertical) abs(face.modX) else 0,
-            faceModZ = if (!isVertical) abs(face.modZ) else 0,
-            faceModY = if (isVertical) abs(face.modY) else 0,
-            width = region.screenWidth(isVertical),
-            height = region.screenHeight(isVertical),
+            depth = depth,
+            width = width,
+            height = height,
+            census = census,
             minHeight = PaperServer.config.settings.minHeight,
             minWidth = PaperServer.config.settings.minWidth,
             maxHeight = PaperServer.config.settings.maxHeight,
             maxWidth = PaperServer.config.settings.maxWidth,
-            hasExpectedBaseMaterial = {
-                val world = pos1.world ?: return@validateRegion false
-                for (x in region.minX..region.maxX) {
-                    for (y in region.minY..region.maxY) {
-                        for (z in region.minZ..region.maxZ) {
-                            if (world.getBlockAt(x, y, z).type != PaperServer.config.settings.baseMaterial) {
-                                return@validateRegion false
-                            }
-                        }
-                    }
-                }
-                true
-            },
             sendError = sendError,
             onWrongStructure = onWrongStructure,
-        )?.let { sel }
+        ) ?: return null
+        sel.conforming = conforming
+        return sel
     }
 }
 
 /** Shared `Fabric` / `NeoForge` version of the [CreateCommand]. */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @ModLoaderOnly
 object VanillaCreateCommand {
     /** Command execution logic. */
@@ -188,7 +194,7 @@ object VanillaCreateCommand {
         ) ?: return 0
 
         if (DisplayManager.isOverlaps(sel)) {
-            MessageUtil.sendMessage(player, "displayOverlap")
+            ServerMessage.DISPLAY_OVERLAP.sendTo(player)
             return 0
         }
 
@@ -201,7 +207,7 @@ object VanillaCreateCommand {
             ) &&
             DisplayManager.countOwnedBy(player.uuid) >= maxDisplays
         ) {
-            MessageUtil.sendMessage(player, "displayLimitReached", maxDisplays)
+            ServerMessage.DISPLAY_LIMIT_REACHED.sendTo(player, maxDisplays)
             return 0
         }
 
@@ -214,14 +220,10 @@ object VanillaCreateCommand {
         val receivers = DisplayManager.getReceivers(displayData, ctx.source.server)
         VanillaPacketUtil.sendDisplayInfo(receivers, displayData)
 
-        MessageUtil.sendMessage(player, "successfulCreation")
+        ServerMessage.SUCCESSFUL_CREATION.sendTo(player)
         return 1
     }
 
-    /**
-     * Validates the player's current selection, enforces overlap and Y-range limits, and
-     * registers the resulting display.
-     */
     private fun validate(
         sel: VanillaSelectionData,
         server: MinecraftServer,
@@ -248,67 +250,65 @@ object VanillaCreateCommand {
         }
 
         val facing = sel.facing
-        val isVertical = facing == Direction.UP || facing == Direction.DOWN
+        val (width, height, depth) = region.screenExtents(abs(facing.stepX), abs(facing.stepY), abs(facing.stepZ))
+        val surface = VanillaSurfaces.of(VanillaServerState.config.settings.baseMaterialId)
+        var census = SurfaceCensus()
+        for (x in region.minX..region.maxX) {
+            for (y in region.minY..region.maxY) {
+                for (z in region.minZ..region.maxZ) {
+                    val blockState = level.getBlockState(BlockPos(x, y, z))
+                    val role = if (blockState.isAir) {
+                        SurfaceRole.AIR
+                    } else {
+                        surface.role(BuiltInRegistries.BLOCK.getKey(blockState.block).toString())
+                    }
+                    census = census.add(role)
+                }
+            }
+        }
 
-        return validateRegion(
+        val conforming = validateRegion(
             minY = region.minY,
             maxY = region.maxY,
-            deltaX = region.deltaX,
-            deltaZ = region.deltaZ,
-            deltaY = region.deltaY,
-            faceModX = if (!isVertical) abs(facing.stepX) else 0,
-            faceModZ = if (!isVertical) abs(facing.stepZ) else 0,
-            faceModY = if (isVertical) abs(facing.stepY) else 0,
-            width = region.screenWidth(isVertical),
-            height = region.screenHeight(isVertical),
+            depth = depth,
+            width = width,
+            height = height,
+            census = census,
             minHeight = VanillaServerState.config.settings.minHeight,
             minWidth = VanillaServerState.config.settings.minWidth,
             maxHeight = VanillaServerState.config.settings.maxHeight,
             maxWidth = VanillaServerState.config.settings.maxWidth,
-            hasExpectedBaseMaterial = {
-                for (x in region.minX..region.maxX) {
-                    for (y in region.minY..region.maxY) {
-                        for (z in region.minZ..region.maxZ) {
-                            val blockState = level.getBlockState(BlockPos(x, y, z))
-                            val blockKey = BuiltInRegistries.BLOCK.getKey(blockState.block).toString()
-                            if (blockKey != VanillaServerState.config.settings.baseMaterialId) {
-                                return@validateRegion false
-                            }
-                        }
-                    }
-                }
-                true
-            },
             sendError = sendError,
             onWrongStructure = onWrongStructure,
-        )?.let { sel }
+        ) ?: return null
+        sel.conforming = conforming
+        return sel
     }
 }
 
-/** Validates the given region. */
 private fun validateRegion(
     minY: Int,
     maxY: Int,
-    deltaX: Int,
-    deltaZ: Int,
-    deltaY: Int,
-    faceModX: Int,
-    faceModZ: Int,
-    faceModY: Int = 0,
+    depth: Int,
     width: Int,
     height: Int,
+    census: SurfaceCensus,
     minHeight: Int,
     minWidth: Int,
     maxHeight: Int,
     maxWidth: Int,
-    hasExpectedBaseMaterial: () -> Boolean,
     sendError: (String, Array<out Any>) -> Unit,
     onWrongStructure: (() -> Unit)? = null,
-): Unit? {
-    val depthOk = (faceModX != 0 && deltaX == faceModX)
-            || (faceModZ != 0 && deltaZ == faceModZ)
-            || (faceModY != 0 && deltaY == faceModY)
-    if (!depthOk) {
+): Boolean? {
+    if (census.conforming) {
+        if (depth !in 1..maxOf(maxWidth, maxHeight)) {
+            sendError("structureTooLarge", arrayOf(maxWidth, maxHeight))
+            return null
+        }
+    } else if (!census.flat) {
+        onWrongStructure?.invoke() ?: sendError("wrongStructure", emptyArray())
+        return null
+    } else if (depth != 1) {
         sendError("structureWrongDepth", emptyArray())
         return null
     }
@@ -328,9 +328,5 @@ private fun validateRegion(
         sendError("displayTooLow", emptyArray())
         return null
     }
-    if (!hasExpectedBaseMaterial()) {
-        onWrongStructure?.invoke() ?: sendError("wrongStructure", emptyArray())
-        return null
-    }
-    return Unit
+    return census.conforming
 }

@@ -1,10 +1,12 @@
 //? if >=1.21.11 {
 package com.dreamdisplays.platform.client.render
 
+//? if <26.3 {
 import com.mojang.blaze3d.pipeline.RenderPipeline
 import com.mojang.blaze3d.shaders.UniformType
-import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import com.mojang.blaze3d.vertex.VertexFormat
+//?}
+import com.mojang.blaze3d.vertex.DefaultVertexFormat
 import net.minecraft.resources.Identifier
 
 internal object RenderPipelineCompat {
@@ -32,16 +34,18 @@ internal object RenderPipelineCompat {
         return builder.build()
     }
 
-    fun configureBlend(builder: RenderPipeline.Builder) {
+    fun configureBlend(builder: RenderPipelineBuilder) {
         val builderClass = builder.javaClass
-        val blendFunctionClass = runCatching {
-            Class.forName("com.mojang.blaze3d.pipeline.BlendFunction")
-        }.getOrNull() ?: return
+        val blendFunctionClass = loadClass(
+            "com.mojang.renderpearl.api.pipeline.BlendFunction",
+            "com.mojang.blaze3d.pipeline.BlendFunction",
+        ) ?: return
         val translucent = blendFunctionClass.getField("TRANSLUCENT").get(null)
 
-        val colorTargetStateClass = runCatching {
-            Class.forName("com.mojang.blaze3d.pipeline.ColorTargetState")
-        }.getOrNull()
+        val colorTargetStateClass = loadClass(
+            "com.mojang.renderpearl.api.pipeline.ColorTargetState",
+            "com.mojang.blaze3d.pipeline.ColorTargetState",
+        )
         if (colorTargetStateClass != null) {
             val state = colorTargetStateClass.getConstructor(blendFunctionClass).newInstance(translucent)
             builderClass.getMethod("withColorTargetState", colorTargetStateClass).invoke(builder, state)
@@ -53,18 +57,15 @@ internal object RenderPipelineCompat {
         }
     }
 
-    /**
-     * Constant term of the GPU polygon-offset bias applied to display quads (see [configureDepth]).
-     * Matches vanilla's own depth-bias constant.
-     */
     private const val DEPTH_BIAS = 3.0f
 
     /** Configures the depth state of the pipeline. */
-    fun configureDepth(builder: RenderPipeline.Builder) {
+    fun configureDepth(builder: RenderPipelineBuilder) {
         val builderClass = builder.javaClass
-        val depthStencilStateClass = runCatching {
-            Class.forName("com.mojang.blaze3d.pipeline.DepthStencilState")
-        }.getOrNull()
+        val depthStencilStateClass = loadClass(
+            "com.mojang.renderpearl.api.pipeline.DepthStencilState",
+            "com.mojang.blaze3d.pipeline.DepthStencilState",
+        )
         if (depthStencilStateClass != null) {
             val defaultDepth = depthStencilStateClass.getField("DEFAULT").get(null)
             val biasedDepth = withPolygonOffset(depthStencilStateClass, defaultDepth)
@@ -83,18 +84,16 @@ internal object RenderPipelineCompat {
         }
     }
 
-    /**
-     * Rebuilds [defaultDepth] with a small GPU polygon-offset bias (`depthBiasScaleFactor` /
-     * `depthBiasConstant`) so the display quad wins the depth test against the block face directly
-     * behind it.
-     */
     private fun withPolygonOffset(depthStencilStateClass: Class<*>, defaultDepth: Any): Any {
         val depthTest = depthStencilStateClass.getMethod("depthTest").invoke(defaultDepth)
         val writeDepth = depthStencilStateClass.getMethod("writeDepth").invoke(defaultDepth) as Boolean
         val reversedZ = (depthTest as Enum<*>).name == "GREATER_THAN_OR_EQUAL"
         val bias = if (reversedZ) DEPTH_BIAS else -DEPTH_BIAS
 
-        val compareOpClass = Class.forName("com.mojang.blaze3d.platform.CompareOp")
+        val compareOpClass = loadClass(
+            "com.mojang.renderpearl.api.pipeline.CompareOp",
+            "com.mojang.blaze3d.platform.CompareOp",
+        ) ?: return defaultDepth
         val ctor = depthStencilStateClass.getConstructor(
             compareOpClass,
             Boolean::class.javaPrimitiveType,
@@ -104,12 +103,17 @@ internal object RenderPipelineCompat {
         return ctor.newInstance(depthTest, writeDepth, bias, bias)
     }
 
-    /** True if the current version of Minecraft supports `BindGroupLayout`s. */
-    private fun supportsBindGroupLayouts(): Boolean =
-        runCatching { Class.forName("com.mojang.blaze3d.pipeline.BindGroupLayout") }.isSuccess
+    private fun supportsBindGroupLayouts(): Boolean = bindGroupLayoutClass() != null
 
-    /** Configures the pipeline for a display quad. */
-    private fun configureLegacy(builder: RenderPipeline.Builder, samplers: List<String>) {
+    private fun bindGroupLayoutClass(): Class<*>? = loadClass(
+        "com.mojang.renderpearl.api.pipeline.BindGroupLayout",
+        "com.mojang.blaze3d.pipeline.BindGroupLayout",
+    )
+
+    private fun loadClass(vararg names: String): Class<*>? =
+        names.firstNotNullOfOrNull { runCatching { Class.forName(it) }.getOrNull() }
+
+    private fun configureLegacy(builder: RenderPipelineBuilder, samplers: List<String>) {
         val builderClass = builder.javaClass
         val withUniform = builderClass.getMethod("withUniform", String::class.java, UniformType::class.java)
         withUniform.invoke(builder, "DynamicTransforms", UniformType.UNIFORM_BUFFER)
@@ -134,43 +138,81 @@ internal object RenderPipelineCompat {
             .invoke(builder, DefaultVertexFormat.POSITION_TEX_COLOR, quads)*/
     }
 
-    /** Configures the pipeline for a display quad. */
-    private fun configure262(builder: RenderPipeline.Builder, samplers: List<String>) {
+    private fun configure262(builder: RenderPipelineBuilder, samplers: List<String>) {
         val builderClass = builder.javaClass
-        val bglClass = Class.forName("com.mojang.blaze3d.pipeline.BindGroupLayout")
+        val bglClass = bindGroupLayoutClass() ?: return
         val withBindGroupLayout = builderClass.getMethod("withBindGroupLayout", bglClass)
 
-        withBindGroupLayout.invoke(builder, vanillaLayout("GLOBALS"))
-        withBindGroupLayout.invoke(builder, vanillaLayout("MATRICES_PROJECTION"))
-        withBindGroupLayout.invoke(builder, vanillaLayout("FOG"))
+        bindWorldDisplayUniforms(withBindGroupLayout, builder)
         withBindGroupLayout.invoke(
             builder,
-            if (samplers == listOf("Sampler0")) vanillaLayout("SAMPLER0") else samplerLayout(samplers),
+            if (samplers == ["Sampler0"]) vanillaLayout("SAMPLER0") else samplerLayout(samplers),
         )
 
         builderClass.getMethod("withVertexBinding", Int::class.javaPrimitiveType, VertexFormat::class.java)
             .invoke(builder, 0, DefaultVertexFormat.POSITION_TEX_COLOR)
 
-        val topologyClass = Class.forName("com.mojang.blaze3d.PrimitiveTopology")
+        val topologyClass = loadClass(
+            "com.mojang.renderpearl.api.pipeline.PrimitiveTopology",
+            "com.mojang.blaze3d.PrimitiveTopology",
+        ) ?: return
 
         val quads = reflectiveEnumValue(topologyClass, "QUADS")
         builderClass.getMethod("withPrimitiveTopology", topologyClass).invoke(builder, quads)
     }
 
-    /** Creates a `BindGroupLayout` for the given samplers. */
+    internal fun bindWorldDisplayUniforms(withBindGroupLayout: java.lang.reflect.Method, builder: Any) {
+        withBindGroupLayout.invoke(builder, vanillaLayout("GLOBALS"))
+        if (hasLayout("DYNAMIC_TRANSFORMS")) {
+            withBindGroupLayout.invoke(builder, vanillaLayout("PROJECTION"))
+            withBindGroupLayout.invoke(builder, vanillaLayout("DYNAMIC_TRANSFORMS"))
+        } else {
+            withBindGroupLayout.invoke(builder, vanillaLayout("MATRICES_PROJECTION"))
+        }
+        withBindGroupLayout.invoke(builder, vanillaLayout("FOG"))
+    }
+
+    private fun hasLayout(name: String): Boolean =
+        runCatching {
+            Class.forName("net.minecraft.client.renderer.BindGroupLayouts").getField(name)
+        }.isSuccess
+
     private fun samplerLayout(samplers: List<String>): Any {
-        val bglClass = Class.forName("com.mojang.blaze3d.pipeline.BindGroupLayout")
+        val bglClass = bindGroupLayoutClass() ?: error("BindGroupLayout is missing")
         val layoutBuilder = bglClass.getMethod("builder").invoke(null)
-        val withSampler = layoutBuilder.javaClass.getMethod("withSampler", String::class.java)
-        for (sampler in samplers) {
-            withSampler.invoke(layoutBuilder, sampler)
+        val withSampler = runCatching {
+            layoutBuilder.javaClass.getMethod("withSampler", String::class.java)
+        }.getOrNull()
+        if (withSampler != null) {
+            for (sampler in samplers) {
+                withSampler.invoke(layoutBuilder, sampler)
+            }
+        } else {
+            val uniformTypeClass = loadClass(
+                "com.mojang.renderpearl.api.pipeline.UniformType",
+                "com.mojang.blaze3d.shaders.UniformType",
+            ) ?: error("UniformType is missing")
+            val combined = reflectiveEnumValue(uniformTypeClass, "COMBINED_IMAGE_SAMPLER")
+            val withUniform = layoutBuilder.javaClass.getMethod(
+                "withUniform",
+                String::class.java,
+                uniformTypeClass,
+            )
+            for (sampler in samplers) {
+                withUniform.invoke(layoutBuilder, sampler, combined)
+            }
         }
         return layoutBuilder.javaClass.getMethod("build").invoke(layoutBuilder)
     }
 
-    /** Gets the `BindGroupLayout` for the given name. */
-    private fun vanillaLayout(name: String): Any =
-        Class.forName("net.minecraft.client.renderer.BindGroupLayouts").getField(name).get(null)
+    private fun vanillaLayout(vararg names: String): Any {
+        val clazz = Class.forName("net.minecraft.client.renderer.BindGroupLayouts")
+        val last = names.last()
+        names.forEach { name ->
+            runCatching { return clazz.getField(name).get(null) }
+        }
+        return clazz.getField(last).get(null)
+    }
 
     /** Resolves enum constant [name] on [enumClass], whose static type is not known at compile time. */
     fun reflectiveEnumValue(enumClass: Class<*>, name: String): Any =

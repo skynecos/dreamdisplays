@@ -1,6 +1,6 @@
 package com.dreamdisplays.platform.server.proxy
 
-import com.dreamdisplays.api.playback.model.FullscreenMode
+import com.dreamdisplays.shared.playback.FullscreenMode
 import com.dreamdisplays.api.playback.model.WatchPartySessionState
 import com.dreamdisplays.core.protocol.common.packets.DisplayDelete
 import com.dreamdisplays.core.protocol.common.packets.WatchPartyState
@@ -55,7 +55,7 @@ const val PROXY_CHANNEL: String = "dreamdisplays:proxy"
 @PaperOnly
 @NullMarked
 object ProxyBridge : PluginMessageListener {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/ProxyBridge")
+    private val logger = LoggerFactory.getLogger(javaClass)
     private val plugin: PaperServer by lazy { PaperServer.getInstance() }
     private val helloSent = AtomicBoolean(false)
     private val lastClockProbeMs = AtomicLong(0L)
@@ -64,19 +64,11 @@ object ProxyBridge : PluginMessageListener {
     var enabled: Boolean = false
         private set
 
-    /** `[proxy] clock_sync_interval`, in milliseconds; how often [tick] emits a [ClockProbe]. */
     private var clockSyncIntervalMs: Long = 5_000L
-
-    /** How long a network display-id lookup waits for the backend that owns it to answer. */
     private const val RESOLVE_TIMEOUT_MS = 5_000L
 
-    /**
-     * A `/display fullscreen start id <id> server <scope>` held while the network is asked which
-     * backend hosts `<id>` — see [ResolveDisplayToken]. Everything but the URL is already decided,
-     * so the answer just fills in the last blank and the normal [startNetworkFullscreen] runs.
-     */
     private class PendingNetworkStart(
-        val playerId: UUID,
+        val ownerId: UUID,
         val token: String,
         val scope: String,
         val mode: FullscreenMode?,
@@ -120,11 +112,6 @@ object ProxyBridge : PluginMessageListener {
         sendDisplayIndex(player)
     }
 
-    /**
-     * Tells the proxy every display this backend can play, so `fullscreen start id <id>` resolves
-     * network-wide even for a display whose backend is empty at the time — such a backend can be
-     * neither asked nor heard, since plugin messages ride player connections.
-     */
     private fun sendDisplayIndex(player: Player) {
         val entries = DisplayManager.getDisplays()
             .filter { it.url.isNotBlank() }
@@ -132,7 +119,6 @@ object ProxyBridge : PluginMessageListener {
         if (entries.isNotEmpty()) send(player, BackendDisplayIndex(entries))
     }
 
-    /** Encodes and sends [packet] on [PROXY_CHANNEL] via [player]'s connection to the proxy. */
     private fun send(player: Player, packet: ProxyPacket) {
         val bytes = runCatching { ProxyPacketRegistry.encode(packet) }
             .onFailure { logger.warn("Failed to encode proxy packet", it) }
@@ -141,10 +127,13 @@ object ProxyBridge : PluginMessageListener {
             .onFailure { logger.debug("Failed to send proxy packet (no proxy listening?)", it) }
     }
 
-    /** Same as [send], but picks any online player to ride the message — for packets with no natural sender. */
     private fun sendViaAnyPlayer(packet: ProxyPacket) {
-        val rider = Bukkit.getOnlinePlayers().firstOrNull() ?: return
-        send(rider, packet)
+        sendVia(null, packet)
+    }
+
+    private fun sendVia(rider: Player?, packet: ProxyPacket): Boolean {
+        send(rider ?: Bukkit.getOnlinePlayers().firstOrNull() ?: return false, packet)
+        return true
     }
 
     /**
@@ -153,7 +142,8 @@ object ProxyBridge : PluginMessageListener {
      * of [FullscreenBroadcastManager.start] when the command carried a `server` scope.
      */
     fun startNetworkFullscreen(
-        player: Player,
+        rider: Player?,
+        ownerId: UUID,
         scope: String,
         url: String,
         mode: FullscreenMode?,
@@ -162,13 +152,13 @@ object ProxyBridge : PluginMessageListener {
         loop: Boolean,
         quality: String?,
         targetsRaw: String? = null,
-    ) {
-        send(
-            player,
+    ): Boolean =
+        sendVia(
+            rider,
             StartNetworkFullscreen(
                 targetsRaw = targetsRaw ?: "",
                 scope = scope,
-                ownerId = player.uniqueId.toString(),
+                ownerId = ownerId.toString(),
                 url = url,
                 mode = (mode ?: FullscreenMode.STANDARD).ordinal,
                 forced = forced,
@@ -177,11 +167,11 @@ object ProxyBridge : PluginMessageListener {
                 quality = quality ?: "",
             ),
         )
-    }
 
     /** Starts a network fullscreen for an unknown id; asks the network to resolve it first. */
     fun startNetworkFullscreenByDisplayId(
-        player: Player,
+        rider: Player?,
+        ownerId: UUID,
         scope: String,
         token: String,
         mode: FullscreenMode?,
@@ -190,12 +180,12 @@ object ProxyBridge : PluginMessageListener {
         loop: Boolean,
         quality: String?,
         targetsRaw: String? = null,
-    ) {
+    ): Boolean {
         val now = System.currentTimeMillis()
         pendingStarts.values.removeIf { it.expiresAtMs < now }
         val requestId = UUID.randomUUID().toString().take(8)
         pendingStarts[requestId] = PendingNetworkStart(
-            playerId = player.uniqueId,
+            ownerId = ownerId,
             token = token,
             scope = scope,
             mode = mode,
@@ -206,7 +196,7 @@ object ProxyBridge : PluginMessageListener {
             targetsRaw = targetsRaw,
             expiresAtMs = now + RESOLVE_TIMEOUT_MS,
         )
-        send(player, ResolveDisplayToken(requestId = requestId, token = token))
+        return sendVia(rider, ResolveDisplayToken(requestId = requestId, token = token))
     }
 
     /** Forwards `/display fullscreen stop <id>` to the proxy when [sessionId] isn't a live local session. */
@@ -219,7 +209,6 @@ object ProxyBridge : PluginMessageListener {
         send(player, StartNetworkWatchParty(hostId = player.uniqueId.toString(), url = url, lang = lang))
     }
 
-    /** Relays the host's own [WatchPartyState] snapshot to the proxy, translated to its epoch. */
     private fun relayWatchPartyState(displayId: UUID, snapshot: WatchPartyState) {
         sendViaAnyPlayer(
             NetworkWatchPartyState(
@@ -241,11 +230,6 @@ object ProxyBridge : PluginMessageListener {
         )
     }
 
-    /**
-     * Resolves a broadcast's `target` tokens against this backend's online players. Sender-relative
-     * selectors (`@s`, `@p`, `@r`) are meaningless for a network broadcast — the commanding player is
-     * on one backend only — so they are not offered here. Blank means everyone online.
-     */
     private fun resolveNetworkTargets(targetsRaw: String): Set<UUID> {
         val online = Bukkit.getOnlinePlayers()
         if (targetsRaw.isBlank()) return online.map { it.uniqueId }.toSet()
@@ -265,7 +249,6 @@ object ProxyBridge : PluginMessageListener {
         send(player, ListNetworkSessions())
     }
 
-    /** Applies a proxy-driven [ApplyFullscreen], creating a fresh local virtual display for it. */
     private fun applyNetworkFullscreen(packet: ApplyFullscreen) {
         val ownerId = runCatching { UUID.fromString(packet.ownerId) }.getOrNull() ?: return
         val sharedId = runCatching { UUID.fromString(packet.sharedDisplayId) }.getOrNull()
@@ -429,10 +412,10 @@ object ProxyBridge : PluginMessageListener {
             is DisplayTokenResolved -> {
                 val pending = pendingStarts.remove(packet.requestId) ?: return
                 if (pending.expiresAtMs < System.currentTimeMillis()) return
-                val player = Bukkit.getPlayer(pending.playerId) ?: return
                 logger.debug("Display '{}' resolved network-wide to {}.", pending.token, packet.url)
                 startNetworkFullscreen(
-                    player = player,
+                    rider = Bukkit.getPlayer(pending.ownerId),
+                    ownerId = pending.ownerId,
                     scope = pending.scope,
                     url = packet.url,
                     mode = pending.mode,

@@ -1,8 +1,8 @@
 package com.dreamdisplays.platform.client.displays
 
-import com.dreamdisplays.api.media.service.keys.MediaServices
-import com.dreamdisplays.api.media.audio.service.keys.AudioAcousticsServices
-import com.dreamdisplays.api.media.source.model.MediaSource
+import com.dreamdisplays.core.services.keys.MediaServices
+import com.dreamdisplays.core.services.keys.AudioAcousticsServices
+import com.dreamdisplays.api.media.source.MediaSource
 import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.core.protocol.common.packets.ReportDuration
 import com.dreamdisplays.media.player.MediaPlayer
@@ -20,7 +20,6 @@ import net.minecraft.client.Minecraft
  * saved state on start, and teardown.
  */
 internal class DisplayMediaController(private val screen: DisplayScreen) {
-    /** Generation counter for async callbacks. */
     private val generation = atomic(0L)
 
     /** The active media player, or null between videos and after [shutdown]. */
@@ -55,6 +54,7 @@ internal class DisplayMediaController(private val screen: DisplayScreen) {
         DisplayRegistry.recordScreen(screen)
         val shouldBePaused = preservePausedState && screen.paused
         val audioStage = DreamServices.registry.getOrNull(AudioAcousticsServices.ACOUSTICS)?.registerSource(screen.uuid)
+        screen.primeSizeLod()
         val newPlayer = MediaPlayer(
             videoUrl, lang, DisplayPlaybackHost(screen), DreamPlaybackEnvironment,
             screen.takeReplayBootstrap(videoUrl), audioStage,
@@ -87,6 +87,8 @@ internal class DisplayMediaController(private val screen: DisplayScreen) {
         (screen.videoUrl?.let(MediaSource::from) as? MediaSource.YouTube)?.let { WatchedVideoStore.markWatched(it.videoId) }
         screen.applyEffectiveVolume()
         mp.setBrightness(screen.brightness)
+        // The distance / size steps may have moved while the stream resolved; a no-op when they didn't.
+        screen.reloadQuality()
         if (screen.paused) mp.pause() else {
             mp.play()
             screen.paused = false
@@ -97,7 +99,6 @@ internal class DisplayMediaController(private val screen: DisplayScreen) {
         DisplayRegistry.recordScreen(screen)
     }
 
-    /** Reports the resolved media duration once, if this display's server clock needs it to loop. */
     private fun reportDurationIfNeeded() {
         val mode = screen.effectiveMode
         if (mode != PlaybackMode.SYNCED && mode != PlaybackMode.BROADCAST) return
@@ -109,7 +110,6 @@ internal class DisplayMediaController(private val screen: DisplayScreen) {
     /** Runs [action] once the current player is initialized; guards against stale generations. */
     fun whenInitialized(action: () -> Unit) = whenInitialized(generation.value, action)
 
-    /** Runs [action] when the player is initialized, only if [expectedGeneration] still matches (i.e. video hasn't changed). */
     private fun whenInitialized(expectedGeneration: Long, action: () -> Unit) {
         val mp = player ?: return
         mp.whenInitialized {

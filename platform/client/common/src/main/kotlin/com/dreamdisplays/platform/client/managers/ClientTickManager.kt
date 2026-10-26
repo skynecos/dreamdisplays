@@ -1,8 +1,8 @@
 package com.dreamdisplays.platform.client.managers
 
 import com.dreamdisplays.api.display.model.property.DisplayId
-import com.dreamdisplays.api.media.audio.service.keys.AudioAcousticsServices
-import com.dreamdisplays.api.runtime.registry.service.getOrNull
+import com.dreamdisplays.core.services.keys.AudioAcousticsServices
+import com.dreamdisplays.core.runtime.getOrNull
 import com.dreamdisplays.platform.client.audio.ListenerPoseTracker
 import com.dreamdisplays.platform.client.capabilities.CapabilityNegotiationService
 import com.dreamdisplays.platform.client.core.ClientApplication
@@ -18,39 +18,23 @@ import net.minecraft.client.Minecraft
 import net.minecraft.client.gui.screens.TitleScreen
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen
 import net.minecraft.client.multiplayer.ClientLevel
-import org.lwjgl.glfw.GLFW
+import net.minecraft.client.multiplayer.ClientPacketListener
 import java.util.*
 
 /**
  * Handles per-tick client display state: level changes, hover, unloading, and shortcuts.
  */
 object ClientTickManager {
-    /**
-     * Deadband around a display's renderDistance so a player lingering near the boundary doesn't
-     * flip park / wake every tick (block-quantized position drift across a single threshold).
-     */
     private const val DORMANT_HYSTERESIS_BLOCKS = 4
-
-    /** Edge-detect state for the menu-open button. */
     private var wasPressed = false
-
-    /** True while the player is connected to a server / local world. */
     private var wasInMultiplayer = false
 
-    /** The level seen last tick, used to detect level changes. */
     @Volatile
     private var lastLevel: ClientLevel? = null
-
-    /** Counter that throttles the unloaded-screen restore check. */
+    private var lastConnection: ClientPacketListener? = null
     private var unloadCheckTick = 0
-
-    /** The display currently under the crosshair, or `null`. */
     private var hoveredDisplayScreen: DisplayScreen? = null
-
-    /** Id of the display hovered last tick, used to emit look events on change. */
     private var lastHoveredId: UUID? = null
-
-    /** Monotonic tick counter emitted with [ClientLifecycleEvent.Tick]. */
     private var tickCount = 0L
 
     /** Main per-tick update: level changes, hover, render-distance (un)loading, and the menu shortcut. */
@@ -65,13 +49,20 @@ object ClientTickManager {
 
         val level = minecraft.level
         if (level != null && (minecraft.currentServer != null || minecraft.isLocalServer)) {
+            val connection = minecraft.connection
+            val newBackend = connection != null && lastConnection != null && connection !== lastConnection
+            if (connection != null) lastConnection = connection
             if (lastLevel == null) {
                 lastLevel = level
+                if (newBackend) {
+                    DisplayRegistry.unloadAllForServerSwitch(newBackend = true)
+                    hoveredDisplayScreen = null
+                }
                 checkVersionAndSendPacket()
             }
             if (level !== lastLevel) {
                 lastLevel = level
-                DisplayRegistry.unloadAllForServerSwitch()
+                DisplayRegistry.unloadAllForServerSwitch(newBackend)
                 hoveredDisplayScreen = null
                 checkVersionAndSendPacket()
             }
@@ -86,6 +77,7 @@ object ClientTickManager {
                 FullscreenOverlayManager.closeAll()
                 hoveredDisplayScreen = null
                 lastLevel = null
+                lastConnection = null
                 return
             }
             lastLevel = null
@@ -110,6 +102,7 @@ object ClientTickManager {
             DisplayLifecycleManager.restoreVisibleUnloadedScreens(playerPos)
         }
 
+        val overBudget = DisplayLifecycleManager.overBudget(playerPos)
         for (displayScreen in DisplayRegistry.getScreens()) {
             // Hysteresis
             val threshold = if (displayScreen.isDormant) {
@@ -117,7 +110,7 @@ object ClientTickManager {
             } else {
                 displayScreen.renderDistance + DORMANT_HYSTERESIS_BLOCKS
             }
-            val outOfRange = threshold < displayScreen.getDistanceToScreen(playerPos)
+            val outOfRange = threshold < displayScreen.getDistanceToScreen(playerPos) || displayScreen in overBudget
             val shouldUnload = (outOfRange || !ClientStateManager.displaysEnabled) &&
                     !displayScreen.isPopoutActive && !displayScreen.virtual
 
@@ -157,33 +150,29 @@ object ClientTickManager {
 
         // The menu-open button comes from the KeyBindingRegistry; the click itself is routed
         // through the InputHandler chain (DisplayMenuInputHandler consumes sneak + click-on-display).
-        val window =
-            //? if >=1.21.11 {
-            minecraft.window.handle()
-        //?} else
-        /*minecraft.window.window*/
-        val menuButton = DreamServices.registry.getOrNull<KeyBindingRegistry>()
-            ?.findById(DisplayMenuInputHandler.OPEN_MENU_BINDING_ID)?.defaultKey
-            ?: GLFW.GLFW_MOUSE_BUTTON_RIGHT
-        val pressed = GLFW.glfwGetMouseButton(window, menuButton) == GLFW.GLFW_PRESS
-        if (pressed && !wasPressed) {
-            DreamServices.registry.getOrNull<InputHandler>()?.handle(
-                InputAction.MouseClicked(minecraft.mouseHandler.xpos(), minecraft.mouseHandler.ypos(), menuButton)
-            )
+        // 26.3 only updates isRightPressed while no screen is open, so ignore the shortcut (and
+        // freeze wasPressed) whenever a GUI is showing.
+        if (MinecraftScreenUtil.currentScreen(minecraft) != null) {
+            wasPressed = MouseButtons.hardwareRightDown()
+        } else {
+            val menuButton = DreamServices.registry.getOrNull<KeyBindingRegistry>()
+                ?.findById(DisplayMenuInputHandler.OPEN_MENU_BINDING_ID)?.defaultKey
+                ?: DisplayMenuInputHandler.OPEN_MENU_BINDING.defaultKey
+            val pressed = MouseButtons.hardwareRightDown()
+            if (pressed && !wasPressed) {
+                DreamServices.registry.getOrNull<InputHandler>()?.handle(
+                    InputAction.MouseClicked(minecraft.mouseHandler.xpos(), minecraft.mouseHandler.ypos(), menuButton)
+                )
+            }
+            wasPressed = pressed
         }
-        wasPressed = pressed
     }
 
-    /** Frees a fully warm dormant display, keeping only its cheap replay snapshot for fast reappearance. */
     private fun compressDormant(displayScreen: DisplayScreen) {
         DisplayRegistry.saveScreenData(displayScreen)
         DisplayRegistry.unregisterScreen(displayScreen)
     }
 
-    /**
-     * Ensures there is budget for [candidate], evicting parked displays into snapshots when needed.
-     * Prefers the display furthest from the viewer as the eviction target.
-     */
     private fun reserveWarmSlot(candidate: DisplayScreen): Boolean {
         if (WarmParkPolicy.maxFullWarmDisplays <= 0) return false
         repeat(WarmParkPolicy.maxFullWarmDisplays + 1) {
@@ -198,7 +187,6 @@ object ClientTickManager {
         return false
     }
 
-    /** Emits [DisplayInteraction.Looked] / [DisplayInteraction.LookedAway] when the crosshair target changes. */
     private fun notifyHoverChange(hoveredId: UUID?) {
         if (hoveredId == lastHoveredId) return
         val service = DreamServices.registry.getOrNull<DisplayInteractionService>()
@@ -207,7 +195,6 @@ object ClientTickManager {
         lastHoveredId = hoveredId
     }
 
-    /** Kicks off the capability handshake (legacy Version packet) for the just-joined server. */
     private fun checkVersionAndSendPacket() {
         DreamServices.registry.getOrNull<CapabilityNegotiationService>()?.advertise()
     }

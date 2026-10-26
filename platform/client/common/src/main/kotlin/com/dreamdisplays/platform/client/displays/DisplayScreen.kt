@@ -8,26 +8,29 @@ import net.minecraft.client.renderer.rendertype.RenderType
 import net.minecraft.resources.Identifier
 //?} else
 /*import net.minecraft.resources.ResourceLocation as Identifier*/
-import com.dreamdisplays.api.capability.ServerFeature
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
+import com.dreamdisplays.platform.client.subtitles.WebVttController
+import com.dreamdisplays.shared.capability.ServerFeature
 import com.dreamdisplays.api.display.model.property.DisplayRotation
 import com.dreamdisplays.api.display.model.property.DisplayFacing
 import com.dreamdisplays.api.media.model.DreamMediaException
 import com.dreamdisplays.api.media.model.VideoQuality
-import com.dreamdisplays.api.media.audio.model.AcousticEnvironment
-import com.dreamdisplays.api.media.audio.model.AcousticQuality
-import com.dreamdisplays.api.media.audio.model.SourceAcousticState
-import com.dreamdisplays.api.media.audio.model.SourcePlane
-import com.dreamdisplays.api.media.audio.service.keys.AudioAcousticsServices
-import com.dreamdisplays.api.media.stream.model.MediaStream
-import com.dreamdisplays.api.playback.model.FullscreenMode
+import com.dreamdisplays.api.media.audio.AcousticEnvironment
+import com.dreamdisplays.api.media.audio.AcousticQuality
+import com.dreamdisplays.api.media.audio.SourceAcousticState
+import com.dreamdisplays.api.media.audio.SourcePlane
+import com.dreamdisplays.core.services.keys.AudioAcousticsServices
+import com.dreamdisplays.api.media.stream.MediaStream
+import com.dreamdisplays.api.media.stream.SubtitleTrack
+import com.dreamdisplays.shared.playback.FullscreenMode
 import com.dreamdisplays.api.playback.model.PlaybackAction
-import com.dreamdisplays.api.playback.model.PlaybackContext
+import com.dreamdisplays.shared.playback.PlaybackContext
+import com.dreamdisplays.api.playback.model.DisplayAccess
 import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.api.playback.model.WatchPartyAction
 import com.dreamdisplays.api.playback.model.WatchPartySessionState
-import com.dreamdisplays.api.playback.policy.PlaybackPermissions
-import com.dreamdisplays.api.display.model.settings.ClientDisplaySettings
-import com.dreamdisplays.api.watchparty.model.WatchPartySession
+import com.dreamdisplays.shared.playback.PlaybackPermissions
+import com.dreamdisplays.api.watchparty.WatchPartySession
 import com.dreamdisplays.core.protocol.common.hasFeature
 import com.dreamdisplays.core.protocol.common.packets.*
 import com.dreamdisplays.media.player.MediaPlayer
@@ -40,10 +43,9 @@ import com.dreamdisplays.platform.client.displays.DisplayScreen.Companion.ENV_PR
 import com.dreamdisplays.platform.client.managers.ClientPacketManager
 import com.dreamdisplays.platform.client.managers.ClientStateManager
 import com.dreamdisplays.platform.client.managers.DisplayPopoutManager
-import com.dreamdisplays.platform.client.net.ProtocolRouter
+import com.dreamdisplays.api.display.geometry.DisplayGeometry
 import com.dreamdisplays.platform.client.render.*
 import com.dreamdisplays.platform.client.storage.ClientSettingsStore
-import com.dreamdisplays.platform.client.subtitles.WebVttController
 import com.dreamdisplays.platform.client.ui.DisplayMenu
 import com.dreamdisplays.platform.client.ui.PipCorner
 import com.dreamdisplays.platform.client.ui.widgets.SuggestionsController
@@ -58,6 +60,11 @@ import java.util.*
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.tan
+
+internal const val EXTERNAL_SUBTITLE_TRACK = "kirazium:vtt"
 
 /** Represents a video display screen in the game world. */
 class DisplayScreen(
@@ -67,13 +74,10 @@ class DisplayScreen(
     /** ID of the player who created and owns this display. */
     val ownerUuid: UUID,
 
-    /** Anchor block X coordinate. */
     private var x: Int,
 
-    /** Anchor block Y coordinate. */
     private var y: Int,
 
-    /** Anchor block Z coordinate. */
     private var z: Int,
 
     /** Direction the screen surface faces. */
@@ -95,8 +99,13 @@ class DisplayScreen(
     var rotation: DisplayRotation = DisplayRotation.NONE,
 
     val dimensionKey: String = "",
+
+    /** Blocks the screen extends away from [facing]. `1` for a flat wall. */
+    var depth: Int = 1,
+
+    /** True when the picture hugs slabs and stairs instead of one flat quad. */
+    var conforming: Boolean = false,
 ) {
-    /** Per-display client settings (volume, quality, mute, ...) loaded from disk. */
     private val savedSettings = ClientSettingsStore.getSettings(uuid, defaultVolume())
 
     /** True if the local player owns this display. */
@@ -108,13 +117,35 @@ class DisplayScreen(
     /** Server-reported lock state, or `null` until the server reports it. */
     var isLocked: Boolean? = null
 
+    /** Server-reported access level, or `null` until the server reports it. */
+    var access: DisplayAccess? = null
+
+    /**
+     * True when the display stands inside a `WorldGuard` region. Only affects presentation: the
+     * region access level is offered as a real choice here and explained as ineffective elsewhere.
+     */
+    var inRegion: Boolean = false
+
+    /** Whether the local player belongs to that region; only meaningful at the region access level. */
+    var viewerInRegion: Boolean = false
+
+    /** The level a display in this spot starts at: shared with the region when it stands in one. */
+    val defaultAccess: DisplayAccess
+        get() = if (inRegion) DisplayAccess.REGION else DisplayAccess.DEFAULT
+
+    /**
+     * True when the server can resolve region membership at all (it runs `WorldGuard`). Where it
+     * can't, the region level is left out of the UI entirely rather than offered as a dead option.
+     */
+    val supportsRegionAccess: Boolean
+        get() = ClientPacketManager.serverSnapshot.hasFeature(ServerFeature.REGION_ACCESS)
+
     /** Epoch millis of a pending scheduled play / pause, or `0` when none is set (see [com.dreamdisplays.core.protocol.common.packets.DisplayInfo]). */
     var scheduledStartEpochMillis: Long = 0
 
     /** Wire ordinal of the scheduled [com.dreamdisplays.api.playback.model.PlaybackAction] (`PLAY`/`PAUSE`), or `-1` when none is set. */
     var scheduledAction: Int = -1
 
-    /** Monotonic mark of the last [retryVideo], or `null` if never retried this session. */
     @Volatile
     private var lastRetryMark: TimeSource.Monotonic.ValueTimeMark? = null
 
@@ -158,15 +189,21 @@ class DisplayScreen(
     /** The effective mode the player experiences — `WATCH_PARTY` while a session is live. */
     val effectiveMode: PlaybackMode get() = if (watchParty != null) PlaybackMode.WATCH_PARTY else mode
 
-    /** Local player permission context. */
     private fun ctx(): PlaybackContext = PlaybackContext(
         mode = effectiveMode,
         isOwner = owner,
         isAdmin = isAdmin,
-        isLocked = PlaybackPermissions.isEffectivelyLocked(effectiveMode, isLocked == true),
+        isLocked = PlaybackPermissions.isEffectivelyLocked(effectiveMode, lockedForMe()),
         hasActiveParty = watchParty != null,
         isPartyHost = watchParty?.isHost == true,
     )
+
+    private fun lockedForMe(): Boolean = when (access) {
+        DisplayAccess.EVERYONE -> false
+        DisplayAccess.REGION -> !viewerInRegion
+        DisplayAccess.LOCKED -> true
+        null -> isLocked == true // Pre-hello, or a server too old to send a level
+    }
 
     /** True if the local player may play/pause here. Locked displays allow only owner / admin controls. */
     val canControlPlayback: Boolean get() = PlaybackPermissions.canPlayPause(ctx())
@@ -196,9 +233,8 @@ class DisplayScreen(
     val canCloseWatchPartyHere: Boolean get() = PlaybackPermissions.canCloseWatchParty(ctx())
 
     /** The lock the player actually sees: base lock, or forced on by Watch Party / Broadcast. */
-    val effectiveLocked: Boolean get() = PlaybackPermissions.isEffectivelyLocked(effectiveMode, isLocked == true)
+    val effectiveLocked: Boolean get() = PlaybackPermissions.isEffectivelyLocked(effectiveMode, lockedForMe())
 
-    /** Backing store for this display's GPU texture(s) and render types. */
     private val textureResource = DisplayTextureResource(uuid)
 
     /** The live RGBA texture, or `null` in YUV mode / before allocation. */
@@ -256,7 +292,6 @@ class DisplayScreen(
             DisplayRegistry.recordScreen(this)
         }
 
-    /** Set only for the duration of a [setQualityByViewer] write; see that method. Main thread only. */
     private var qualityWriteIsViewerAction = false
 
     /**
@@ -274,38 +309,146 @@ class DisplayScreen(
         }
     }
 
-    /** Requested audio track (stream URL); respawns audio only, not persisted. */
+    /**
+     * Requested audio track (stream URL); respawns audio only. [MinecraftDisplayCommands.setAudioTrack]
+     * persists the track's *language* alongside this (stream URLs aren't stable across resolves), so
+     * [restoreAudioTrackIfPending] can re-apply it once a later resolve exposes a matching track.
+     */
     var audioTrack: String = ""
         set(value) {
             field = value
+            pendingAudioTrackLangRestore = null
             mediaPlayer?.setAudioTrack(value)
         }
 
-    /** Broadcast pins to cap; otherwise applies distance steps. */
-    private fun effectiveQuality(requested: VideoQuality = quality): VideoQuality {
-        val base = if (qualityCap > 0) VideoQuality.Fixed(qualityCap) else requested
-        return applyDistanceSteps(base)
+    private var pendingAudioTrackLangRestore: String? = savedSettings.audioTrackLang
+
+    private fun restoreAudioTrackIfPending() {
+        val wanted = pendingAudioTrackLangRestore ?: return
+        val tracks = audioTrackList
+        if (tracks.isEmpty()) return
+        val match = tracks.firstOrNull { it.audioIdentity == wanted }
+        pendingAudioTrackLangRestore = null
+        if (match != null && match.url != currentAudioTrackUrl) audioTrack = match.url
     }
 
-    /** How many rungs down [QUALITY_LADDER] the current distance has pushed the effective quality; 0 when close. */
-    private var distanceQualitySteps = 0
+    /** Requested subtitle track language, or null to turn subtitles off. */
+    var subtitleTrack: String? = null
+        set(value) {
+            field = value
+            pendingSubtitleLangRestore = null
+            savedSettings.subtitleSource = when (value) { EXTERNAL_SUBTITLE_TRACK -> "external"; null -> "off"; else -> "provider" }
+            if (value == EXTERNAL_SUBTITLE_TRACK) savedSettings.externalSubtitlesEnabled = true
+            mediaPlayer?.setSubtitleTrack(value.takeUnless { it == EXTERNAL_SUBTITLE_TRACK })
+        }
 
-    /** Re-derives distance quality steps and re-pushes if changed. */
-    private fun updateDistanceQuality(fraction: Float) {
+    private var pendingSubtitleLangRestore: String? = savedSettings.subtitleTrackLang.takeIf { savedSettings.subtitlesEnabled && savedSettings.subtitleSource !in setOf("external", "off") }
+
+    private fun restoreSubtitleTrackIfPending() {
+        if (usesExternalSubtitles) return
+        val wanted = pendingSubtitleLangRestore ?: return
+        val tracks = subtitleTrackList
+        if (tracks.isEmpty()) return
+        val match = tracks.firstOrNull { it.lang == wanted }
+        pendingSubtitleLangRestore = null
+        if (match != null) subtitleTrack = match.lang
+    }
+
+    private fun effectiveQuality(requested: VideoQuality = quality): VideoQuality {
+        val base = if (qualityCap > 0) VideoQuality.Fixed(qualityCap) else requested
+        val stepped = applyDistanceSteps(base)
+        val lod = sizeLodHeight
+        if (lod <= 0 || lod >= (stepped.targetHeight ?: DEFAULT_QUALITY)) return stepped
+        return VideoQuality.Fixed(lod)
+    }
+
+    /**
+     * The quality the player opens a new video at: the requested quality, capped and stepped down for
+     * distance / on-screen size like every later switch, so a far display never starts at full resolution.
+     */
+    internal val playbackQuality: VideoQuality get() = effectiveQuality()
+
+    private var distanceQualitySteps = 0
+    private var sizeLodHeight = 0
+    private var sizeLodSinceNanos = 0L
+
+    private fun updateDistanceQuality(fraction: Float, distance: Double) {
         var steps = distanceQualitySteps
         while (steps < DISTANCE_STEP_THRESHOLDS.size && fraction >= DISTANCE_STEP_THRESHOLDS[steps]) steps++
         while (steps > 0 && fraction < DISTANCE_STEP_THRESHOLDS[steps - 1] - DISTANCE_STEP_HYSTERESIS) steps--
-        if (steps == distanceQualitySteps) return
+        val lod = nextSizeLodHeight(distance)
+        if (steps == distanceQualitySteps && lod == sizeLodHeight) return
         distanceQualitySteps = steps
+        sizeLodHeight = lod
         reloadQuality()
     }
 
-    /** Moves [base] down [distanceQualitySteps] rungs in [QUALITY_LADDER]; a no-op at 0 steps. */
+    /**
+     * Size LOD: the display's projected height on screen decides how many pixels are worth decoding,
+     * converting and uploading. Sharpening happens right away (with a hysteresis band); softening waits out
+     * [SIZE_LOD_DWELL_NANOS] so walking past doesn't churn streams. Once playing, a paused picture holds its
+     * resolution (a switch would blank it) and a live stream only ever sharpens, after the same dwell, since
+     * each live switch restarts it.
+     */
+    private fun nextSizeLodHeight(distance: Double): Int {
+        // A fullscreen broadcast's synthetic display has no meaningful world position to size by
+        if (!SIZE_LOD_ENABLED || virtual) return 0
+        val started = videoStarted
+        if (started && paused) return sizeLodHeight
+        val live = started && isLive
+
+        val base = (if (qualityCap > 0) qualityCap else quality.targetHeight) ?: DEFAULT_QUALITY
+        val current = if (sizeLodHeight <= 0) base else min(sizeLodHeight, base)
+        val neededPx = height * focalLengthPx() / max(distance, 1.0) * SIZE_LOD_OVERSAMPLE
+        val strict = min(base, lodRungFor(neededPx))
+        val relaxed = min(base, lodRungFor(neededPx * SIZE_LOD_UP_HYSTERESIS))
+
+        val wanted = when {
+            relaxed > current -> relaxed
+            strict < current && !live -> strict
+            else -> {
+                sizeLodSinceNanos = 0L
+                return sizeLodHeight
+            }
+        }
+        // Before playback starts there is no stream to switch yet: just pick the starting quality
+        if (!started) {
+            sizeLodSinceNanos = 0L
+            return wanted
+        }
+        if (wanted < current || live) {
+            val now = System.nanoTime()
+            if (sizeLodSinceNanos == 0L) sizeLodSinceNanos = now
+            if (now - sizeLodSinceNanos < SIZE_LOD_DWELL_NANOS) return sizeLodHeight
+        }
+        if (!tryAcquireLodSwitch()) return sizeLodHeight
+        sizeLodSinceNanos = 0L
+        return wanted
+    }
+
+    /** Works out the size cap before a new player resolves its first stream, so a far display starts small. */
+    internal fun primeSizeLod() {
+        if (isPopoutActive) return
+        val player = Minecraft.getInstance().player ?: return
+        sizeLodHeight = nextSizeLodHeight(getDistanceToScreen(player.blockPosition()))
+    }
+
+    private fun lodRungFor(neededPx: Double): Int {
+        var i = QUALITY_LADDER.lastIndex
+        while (i >= 0) {
+            val rung = QUALITY_LADDER[i]
+            if (rung >= SIZE_LOD_MIN_HEIGHT && rung >= neededPx) return rung
+            i--
+        }
+        return QUALITY_LADDER[0]
+    }
+
     private fun applyDistanceSteps(base: VideoQuality): VideoQuality {
-        if (distanceQualitySteps <= 0) return base
+        val stepsDown = distanceQualitySteps
+        if (stepsDown <= 0) return base
         val baseHeight = base.targetHeight ?: DEFAULT_QUALITY
         val idx = QUALITY_LADDER.indexOfFirst { it <= baseHeight }.let { if (it < 0) QUALITY_LADDER.lastIndex else it }
-        val target = QUALITY_LADDER[(idx + distanceQualitySteps).coerceAtMost(QUALITY_LADDER.lastIndex)]
+        val target = QUALITY_LADDER[(idx + stepsDown).coerceAtMost(QUALITY_LADDER.lastIndex)]
         return VideoQuality.Fixed(target)
     }
 
@@ -315,15 +458,10 @@ class DisplayScreen(
     /** Local paused state (user intent / server-followed). */
     internal var paused: Boolean = savedSettings.paused
 
-    /** Temporary mute applied while the game window is unfocused; does not change [muted]. */
     private var focusMuted: Boolean = false
 
-    /** Distance in blocks past which the display is unloaded; writes record the new value. */
-    var renderDistance: Int = 96
-        set(value) {
-            field = value
-            DisplayRegistry.recordScreen(this)
-        }
+    /** Distance in blocks past which the display is unloaded; mirrors the client's own render distance option. */
+    val renderDistance: Int get() = clientRenderDistanceBlocks()
 
     /** Last known playback position in nanoseconds, restored on reconnect. */
     var savedTimeNanos: Long = 0
@@ -331,59 +469,42 @@ class DisplayScreen(
     /** Follows the server-authoritative timeline (Synced / Broadcast / watch party). */
     internal val timelineFollower = TimelineFollower(this)
 
-    /** Owns the media player lifecycle (creation, swaps, teardown). */
     private val media = DisplayMediaController(this)
-
-    /** Emits the local player's watch-party control intents. */
     private val watchPartyController = WatchPartyController(this)
-
-    /** Pushes decoded frames into the GPU texture(s) on the render thread. */
     private val frameUploader = DisplayFrameUploader(uuid)
-
-    /** The active media player, or `null` between videos. */
     private val mediaPlayer: MediaPlayer? get() = media.player
 
     /** Warm-parked out of render distance: decoder + audio open, instant resume. */
     @Volatile
     var isDormant: Boolean = false; private set
 
-    /** [System.nanoTime] when the display entered warm park; used for TTL eviction. */
     private var dormantSinceNanos = 0L
-
-    /** Manages the PiP / window / fullscreen popout for this display. */
     private val popoutManager = DisplayPopoutManager(this)
 
     /** The currently loaded video URL, or `null` when idle. */
     var videoUrl: String? = null; private set
 
-    /** True while a client-side URL override is active (suppresses server URL changes). */
     private var clientUrlOverride: Boolean = false
 
-    /** Cached [BlockPos] for the anchor, lazily rebuilt when [x]/[y]/[z] change. */
     @Transient
     private var blockPos: BlockPos? = null
 
-    /** True once a frame uploaded; holds last frame across quality handoff. Reset by [createTexture]. */
     @Transient
     @Volatile
     private var hasEverRendered = false
 
-    /** [System.nanoTime] of the first uploaded frame, driving to appear fade-in. `0` = none yet. */
     @Transient
     @Volatile
     private var firstFrameNanos = 0L
 
-    /** True while waiting for the server's first timeline before showing the video (Synced / Broadcast / WP). */
     @Transient
     @Volatile
     private var waitingForInitialTimeline = false
 
-    /** Timeline wait timeout tracker (self-heals stranded "Waiting..." on stale packet). */
     @Transient
     @Volatile
     private var waitingSinceNanos = 0L
 
-    /** Re-checks initial timeline wait; self-clears on timeout. */
     private fun stillWaitingForInitialTimeline(): Boolean {
         if (waitingForInitialTimeline && waitingSinceNanos != 0L &&
             System.nanoTime() - waitingSinceNanos > WAITING_FOR_TIMELINE_TIMEOUT_NANOS
@@ -396,28 +517,11 @@ class DisplayScreen(
     /** Audio track / language of the current video, or `null` when idle. */
     var lang: String? = null; private set
 
-    /** Current server-provided WebVTT URL, empty while subtitles are disabled. */
-    var subtitleUrl: String = ""; private set
-
-    /** Asynchronously loaded immutable WebVTT track for this display. */
-    private val subtitles = WebVttController(uuid)
-
-    /** Subtitle lines active at the same A/V master-clock position used to present video/audio. */
-    val activeSubtitleLines: List<String>
-        get() = subtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)
-
-    /** Updates the VTT source without touching video decoding or the playback timeline. */
-    internal fun setSubtitleSource(url: String) {
-        val normalized = url.trim()
-        if (normalized == subtitleUrl) return
-        subtitleUrl = normalized
-        subtitles.setSource(normalized)
-    }
+    private var lastPacketLang: String? = null
 
     /** True once the video is effectively playing: not awaiting the initial timeline and a frame has filled. */
     val isVideoStarted: Boolean get() = !stillWaitingForInitialTimeline() && (hasEverRendered || mediaPlayer?.textureFilled() == true)
 
-    /** Marks that a frame has rendered, stamping the first-frame time so to appear fade-in can run. */
     private fun markRendered() {
         if (!hasEverRendered) firstFrameNanos = System.nanoTime()
         hasEverRendered = true
@@ -438,6 +542,13 @@ class DisplayScreen(
 
     /** True for a fullscreen broadcast's synthetic display. */
     var virtual: Boolean = false
+
+    /** Data addons keep on this display, as the server last sent it. */
+    var customData: Map<String, ByteArray> = emptyMap()
+        set(value) {
+            field = value
+            setSubtitleSource(VttSubtitleSource.read(value))
+        }
 
     /** Anchor block position of the display (cached). */
     val pos: BlockPos; get() = blockPos ?: BlockPos(x, y, z).also { blockPos = it }
@@ -461,11 +572,11 @@ class DisplayScreen(
 
     /** Pixel heights of the qualities available for the current video. */
     val qualityList: List<Int>
-        get() = mediaPlayer?.getAvailableQualities() ?: emptyList()
+        get() = mediaPlayer?.getAvailableQualities() ?: []
 
     /** Audio tracks available for the current video (more than one only when the provider exposes dubs). */
     val audioTrackList: List<MediaStream>
-        get() = mediaPlayer?.getAvailableAudioTracks() ?: emptyList()
+        get() = mediaPlayer?.getAvailableAudioTracks() ?: []
 
     /** Resolved URL of the audio track currently playing, or empty before a stream has resolved. */
     val currentAudioTrackUrl: String
@@ -474,6 +585,62 @@ class DisplayScreen(
     /** True while an audio-track switch is in flight; the audio can lag the picked track by a few seconds. */
     val isSwitchingAudioTrack: Boolean
         get() = mediaPlayer?.isSwitchingAudioTrack() == true
+
+    /** Subtitle tracks available for the current video (empty unless the provider exposed captions). */
+    val subtitleTrackList: List<SubtitleTrack>
+        get() = (if (subtitleUrl.isNotEmpty()) listOf(SubtitleTrack(subtitleUrl, EXTERNAL_SUBTITLE_TRACK,
+            net.minecraft.network.chat.Component.translatable("dreamdisplays.subtitle.external_vtt").string)) else emptyList()) +
+            (mediaPlayer?.getAvailableSubtitleTracks() ?: emptyList())
+
+    /** Language of the currently selected subtitle track, or null when subtitles are off. */
+    val currentSubtitleLang: String?
+        get() = if (usesExternalSubtitles) EXTERNAL_SUBTITLE_TRACK else mediaPlayer?.getCurrentSubtitleLang()
+
+    /** External subtitle source supplied by the server. */
+    var subtitleUrl: String = ""; private set
+    private val externalSubtitles = WebVttController(uuid)
+
+    private val usesExternalSubtitles: Boolean
+        get() = subtitleUrl.isNotEmpty() && savedSettings.subtitleSource in setOf("auto", "external")
+
+    /** Viewer-local visibility; provider track choice remains owned by upstream playback. */
+    var subtitlesEnabled: Boolean
+        get() = if (usesExternalSubtitles) savedSettings.externalSubtitlesEnabled else savedSettings.subtitleSource != "off" && mediaPlayer?.isSubtitlesEnabled() == true
+        set(value) {
+            if (usesExternalSubtitles || (value && subtitleUrl.isNotEmpty() && savedSettings.subtitleSource == "off")) {
+                savedSettings.externalSubtitlesEnabled = value
+                savedSettings.subtitleSource = if (value) "external" else "off"
+            }
+            else {
+                val language = if (value) savedSettings.subtitleTrackLang ?: subtitleTrackList.firstOrNull()?.lang else null
+                subtitleTrack = language
+                ClientSettingsStore.setSubtitleTrackLang(uuid, language)
+            }
+            ClientSettingsStore.save()
+        }
+
+    var subtitleScale: Float
+        get() = savedSettings.subtitleScale
+        set(value) { savedSettings.subtitleScale = value.coerceIn(0.5f, 2f); ClientSettingsStore.save() }
+
+    var subtitleVerticalPosition: Float
+        get() = savedSettings.subtitleVerticalPosition
+        set(value) { savedSettings.subtitleVerticalPosition = value.coerceIn(0f, 1f); ClientSettingsStore.save() }
+
+    internal fun setSubtitleSource(url: String) {
+        val normalized = url.trim()
+        if (normalized == subtitleUrl) return
+        subtitleUrl = normalized
+        externalSubtitles.setSource(normalized)
+    }
+
+    val activeSubtitleLines: List<String>
+        get() = if (usesExternalSubtitles) externalSubtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)
+        else currentSubtitleText?.lines() ?: emptyList()
+
+    /** Subtitle line active at the current playback position, or null when off / between cues. */
+    val currentSubtitleText: String?
+        get() = mediaPlayer?.getCurrentSubtitleText()
 
     /** True while a quality change is still being applied; the new resolution lands a few seconds later. */
     val isApplyingQuality: Boolean
@@ -506,7 +673,6 @@ class DisplayScreen(
         return true
     }
 
-    /** Internal loader: delegates the player swap to the [media] controller. */
     private fun loadVideoInternal(videoUrl: String, lang: String, preservePausedState: Boolean) {
         media.load(videoUrl, lang, preservePausedState)
     }
@@ -517,6 +683,8 @@ class DisplayScreen(
         this.lang = lang
         waitingForInitialTimeline = requiresServerTimeline()
         waitingSinceNanos = if (waitingForInitialTimeline) System.nanoTime() else 0L
+        pendingAudioTrackLangRestore = savedSettings.audioTrackLang
+        pendingSubtitleLangRestore = savedSettings.subtitleTrackLang.takeIf { savedSettings.subtitlesEnabled && savedSettings.subtitleSource !in setOf("external", "off") }
     }
 
     /** True while the screen is holding back the picture until the server's first timeline arrives. */
@@ -540,7 +708,6 @@ class DisplayScreen(
         mediaPlayer?.clearFrame()
     }
 
-    /** True when the current mode takes its timeline from the server (Synced / Broadcast / watch party). */
     private fun requiresServerTimeline(): Boolean =
         mode == PlaybackMode.SYNCED || mode == PlaybackMode.BROADCAST || watchParty != null
 
@@ -561,7 +728,6 @@ class DisplayScreen(
         )
     }
 
-    /** Lazily created menu-preview texture, kept alive across menu close/reopen (see [PreviewFrameTexture]). */
     @Transient
     private var previewFrameCache: PreviewFrameTexture? = null
 
@@ -569,9 +735,16 @@ class DisplayScreen(
     internal fun previewFrameTexture(): PreviewFrameTexture =
         previewFrameCache ?: PreviewFrameTexture(uuid).also { previewFrameCache = it }
 
+    @Transient
+    private var subtitleOverlayCache: SubtitleOverlayTexture? = null
+
+    internal fun subtitleOverlayTexture(): SubtitleOverlayTexture =
+        subtitleOverlayCache ?: SubtitleOverlayTexture().also { subtitleOverlayCache = it }
+
     /** Updates position, dimensions, and video URL from an incoming [DisplayInfo] packet. */
     fun updateData(packet: DisplayInfo) {
         virtual = packet.virtual
+        customData = acceptedCustomData(packet)
         x = packet.x
         y = packet.y
         z = packet.z
@@ -580,6 +753,8 @@ class DisplayScreen(
         rotation = DisplayRotation.fromQuarterTurns(packet.rotation)
         width = packet.width
         height = packet.height
+        depth = packet.depth.coerceAtLeast(1)
+        conforming = packet.conforming
 
         val nextMode = if (packet.mode == PlaybackMode.LOCAL.wire && packet.isSync) {
             PlaybackMode.SYNCED
@@ -590,13 +765,16 @@ class DisplayScreen(
 
         qualityCap = packet.qualityCap
         isLocked = packet.isLocked
+        access = DisplayAccess.fromWire(packet.access)
+        inRegion = packet.inRegion
+        viewerInRegion = packet.viewerInRegion
         scheduledStartEpochMillis = packet.scheduledStartEpochMillis
         scheduledAction = packet.scheduledAction
         owner = Minecraft.getInstance().player?.gameProfile?.id?.toString() == packet.ownerId.toString()
-        setSubtitleSource(packet.subtitleUrl)
 
-        if (videoUrl != packet.url || lang != packet.lang) {
+        if (videoUrl != packet.url || lastPacketLang != packet.lang) {
             val previousUrl = videoUrl
+            lastPacketLang = packet.lang
             if (clientUrlOverride && canSetVideoHere) return
             if (clientUrlOverride) {
                 clientUrlOverride = false
@@ -619,12 +797,11 @@ class DisplayScreen(
 
             paused = false
             if (packet.url != previousUrl) savedTimeNanos = 0L
-            loadVideo(packet.url, packet.lang)
+            loadVideo(packet.url, ds.audioTrackLang ?: packet.lang)
             sendRequestSyncPacket()
         }
     }
 
-    /** Sends a [RequestSync] packet to ask the server for the current playback state. */
     private fun sendRequestSyncPacket() {
         Initializer.sendPacket(RequestSync(uuid))
     }
@@ -633,17 +810,8 @@ class DisplayScreen(
     /** Applies the authoritative server timeline: matches pause state and corrects drift. */
     fun updateData(packet: DisplaySync) {
         if (watchParty != null) return
-        if (isLegacySync(packet) && usesV2Timeline()) return
         timelineFollower.apply(packet.currentTimeMs, packet.serverTimeMs, packet.isPaused, packet.loop)
     }
-
-    /** Legacy sync packets have no v2 timeline metadata; on modes-capable servers they are stale v1 keepalives. */
-    private fun isLegacySync(packet: DisplaySync): Boolean =
-        packet.mode == PlaybackMode.LOCAL.wire && packet.serverTimeMs == 0L && !packet.loop
-
-    /** True once sync should come from v2 server timelines rather than the frozen-v1 owner relay. */
-    private fun usesV2Timeline(): Boolean =
-        ProtocolRouter.v2Negotiated || ClientPacketManager.serverSnapshot.hasFeature(ServerFeature.MODES)
 
     /** Applies watch-party snapshot: tracks session, loads host video, follows timeline. */
     fun updateWatchParty(packet: WatchPartyState) {
@@ -694,22 +862,48 @@ class DisplayScreen(
     /** Recreates the GPU texture (e.g. after a resolution change). */
     fun reloadTexture() = createTexture()
 
-    /** Pushes the current quality setting to the media player (clamped to [qualityCap]). */
+    /**
+     * Pushes the current quality setting to the media player (clamped to [qualityCap], stepped for distance /
+     * size). `Auto` is pinned to the height it opens at, or stepping back up from a lower rung would be a no-op.
+     */
     fun reloadQuality() {
-        mediaPlayer?.setQuality(effectiveQuality())
+        mediaPlayer?.setQuality(VideoQuality.Fixed(effectiveQuality().targetHeight ?: DEFAULT_QUALITY))
     }
 
     /** Returns true if [pos] falls within the screen's block bounding box. */
     fun isInScreen(pos: BlockPos): Boolean =
-        DisplayGeometry.isInBounds(pos, x, y, z, width, height, facing)
+        PlacedDisplays.contains(uuid, width, height, depth, facing, pos)
+            ?: DisplayGeometry.isInBounds(pos.x, pos.y, pos.z, x, y, z, width, height, facing, depth)
 
     /** Returns the shortest Euclidean distance from [pos] to any block in the screen's bounding box. */
     fun getDistanceToScreen(pos: BlockPos): Double =
-        DisplayGeometry.distanceTo(pos, x, y, z, width, height, facing)
+        PlacedDisplays.distance(uuid, width, height, depth, facing, pos)
+            ?: DisplayGeometry.distanceTo(pos.x, pos.y, pos.z, x, y, z, width, height, facing, depth)
 
-    /** Builds the world-space planar sound source fed to the acoustics engine (see [tick]). */
+    private var cachedPlane: SourcePlane? = null
+    private var planeX = 0
+    private var planeY = 0
+    private var planeZ = 0
+    private var planeWidth = 0
+    private var planeHeight = 0
+    private var planeDepth = 0
+    private var planeFacing: DisplayFacing? = null
+
+    private fun sourcePlane(): SourcePlane {
+        // A display an addon has moved cannot use the cache: its plane changes every tick.
+        PlacedDisplays.sourcePlane(uuid, width, height, depth, facing)?.let { return it }
+        val cached = cachedPlane
+        if (cached != null && planeX == x && planeY == y && planeZ == z && planeWidth == width &&
+            planeHeight == height && planeDepth == depth && planeFacing == facing
+        ) return cached
+        planeX = x; planeY = y; planeZ = z
+        planeWidth = width; planeHeight = height; planeDepth = depth; planeFacing = facing
+        cachedReverb = null
+        return toSourcePlane().also { cachedPlane = it }
+    }
+
     private fun toSourcePlane(): SourcePlane {
-        val pose = DisplayGeometry.worldPose(x, y, z, width, height, facing)
+        val pose = DisplayGeometry.pose(x, y, z, width, height, facing, depth)
         return SourcePlane(
             pose.centerX, pose.centerY, pose.centerZ,
             pose.normalX, pose.normalY, pose.normalZ,
@@ -722,7 +916,27 @@ class DisplayScreen(
     /** Uploads the latest decoded frame to the GPU texture(s). Called on the render thread once per frame. */
     fun fitTexture() {
         val mp = mediaPlayer ?: return
-        frameUploader.upload(mp, textureResource, ::markRendered)
+        frameUploader.upload(mp, textureResource, onRendered)
+    }
+
+    private val onRendered: () -> Unit = ::markRendered
+
+    /**
+     * Render-thread stand-in for [fitTexture] while the display is culled from view. Frames are not uploaded
+     * (the decoder keeps running and the newest one goes up as soon as the display is back in view), except
+     * while a quality handoff is staged: that one only completes once its first frame lands.
+     */
+    fun fitTextureWhileHidden() {
+        if (textureResource.hasPending) fitTexture()
+    }
+
+    private val sphereScratch = DoubleArray(4)
+
+    /** World-space bounding sphere of the display's blocks as center x / y / z and radius, refreshed per call. */
+    internal fun boundingSphere(): DoubleArray {
+        if (PlacedDisplays.boundingSphere(uuid, width, height, depth, facing, sphereScratch)) return sphereScratch
+        DisplayGeometry.boundingSphere(x, y, z, width, height, facing, depth, sphereScratch)
+        return sphereScratch
     }
 
     /** Renders frame to popout; call after all Minecraft / mod rendering to avoid GL-context corruption. */
@@ -759,8 +973,10 @@ class DisplayScreen(
         popoutManager.deactivate(mediaPlayer)
     }
 
-    /** Whether the active fullscreen overlay should stay open (re-showing) past the video's end instead of auto-closing. */
     private var fullscreenLoop = false
+
+    /** [fullscreenLoop] exposed to [DisplayPlaybackHost]. */
+    internal val isFullscreenLoop: Boolean get() = fullscreenLoop
 
     /** Last applied fullscreen state; survives server switch but not display re-creation. */
     @Volatile
@@ -808,7 +1024,6 @@ class DisplayScreen(
     /** Applies the server's pause state without emitting any upstream intent (timeline-follower path). */
     internal fun applyServerPaused(paused: Boolean) = applyPausedLocal(paused)
 
-    /** Toggles the local player's pause state and persists it; never touches the network. */
     private fun applyPausedLocal(paused: Boolean) {
         if (!videoStarted) {
             this.paused = paused
@@ -835,7 +1050,6 @@ class DisplayScreen(
         DisplayRegistry.recordScreen(this)
     }
 
-    /** Emits the upstream intent for the current mode (no-op for Local / Broadcast / non-host). */
     private fun emitPlaybackIntent(action: PlaybackAction, positionMs: Long = currentTimeNanos / 1_000_000L) {
         when (effectiveMode) {
             PlaybackMode.SYNCED -> Initializer.sendPacket(PlaybackCommand(uuid, action.wire, positionMs))
@@ -846,7 +1060,6 @@ class DisplayScreen(
         }
     }
 
-    /** Maps a generic playback action onto its watch-party equivalent. */
     private fun PlaybackAction.toWatchPartyAction(): WatchPartyAction = when (this) {
         PlaybackAction.PLAY -> WatchPartyAction.RESUME
         PlaybackAction.PAUSE -> WatchPartyAction.PAUSE
@@ -877,7 +1090,6 @@ class DisplayScreen(
     /** Stops the media player, releases GPU texture, closes any popout, and closes the display menu if open. */
     fun unregister() {
         captureReplayCache()
-        subtitles.close()
         val currentPlayer = media.shutdown()
         popoutManager.unregister(currentPlayer)
         currentPlayer?.stop()
@@ -885,13 +1097,15 @@ class DisplayScreen(
         textureResource.releaseAsync()
         previewFrameCache?.closeAsync()
         previewFrameCache = null
+        externalSubtitles.close()
+        subtitleOverlayCache?.dispose()
+        subtitleOverlayCache = null
 
         val mc = Minecraft.getInstance()
         val screen = MinecraftScreenUtil.currentScreen(mc)
         if (screen is DisplayMenu && screen.displayScreen === this) screen.onClose()
     }
 
-    /** Captures a native replay snapshot before a local display is softly unloaded. */
     private fun captureReplayCache() {
         if (mode != PlaybackMode.LOCAL || watchParty != null || isLive) return
         val url = videoUrl ?: return
@@ -1032,33 +1246,41 @@ class DisplayScreen(
     /**
      * Resolves the current quality to a target pixel height, clamped to [qualityCap] when set
      * ([VideoQuality.Auto] falls back to [DEFAULT_QUALITY]). Broadcast caps every client at 720p.
+     * Includes the distance / size steps, so a far display's texture, frame buffers and uploads shrink with
+     * the stream instead of staying at the requested resolution.
      */
-    private fun parseQualityOrDefault(): Int {
-        if (qualityCap > 0) return qualityCap
-        return quality.targetHeight ?: DEFAULT_QUALITY
+    private fun parseQualityOrDefault(): Int = effectiveQuality().targetHeight ?: DEFAULT_QUALITY
+
+    private fun focalLengthPx(): Double {
+        val mc = Minecraft.getInstance()
+        val fov = mc.options.fov().get().toDouble().coerceIn(1.0, 179.0)
+        return mc.window.height.coerceAtLeast(1) / (2.0 * tan(Math.toRadians(fov) / 2.0))
     }
 
-    /** Last raytraced acoustic environment, refreshed on the [ENV_PROBE_INTERVAL_TICKS] cadence. */
     private var cachedEnvironment: AcousticEnvironment = AcousticEnvironment.OPEN_AIR
-
-    /** Ticks remaining before the next voxel-acoustics re-probe; jittered per-display to avoid synchronized spikes. */
+    private var cachedReverb: AcousticEnvironment? = null
     private var envProbeCountdown: Int = uuid.hashCode().mod(ENV_PROBE_INTERVAL_TICKS)
+    private var reverbProbeCountdown: Int = uuid.hashCode().mod(REVERB_PROBE_INTERVAL_TICKS)
 
     /** Called every game tick to update distance-based volume attenuation from [pos]. */
     fun tick(pos: BlockPos) {
         val maxRadius = if (isPopoutActive) Double.MAX_VALUE else ClientStateManager.config.defaultDistance.toDouble()
         val distance = getDistanceToScreen(pos)
         mediaPlayer?.tick(distance, maxRadius)
+        restoreAudioTrackIfPending()
+        restoreSubtitleTrackIfPending()
         if (isPopoutActive) {
-            if (distanceQualitySteps != 0) {
+            if (distanceQualitySteps != 0 || sizeLodHeight != 0) {
                 distanceQualitySteps = 0
+                sizeLodHeight = 0
+                sizeLodSinceNanos = 0L
                 reloadQuality()
             }
         } else {
-            updateDistanceQuality((distance / renderDistance.coerceAtLeast(1)).toFloat())
+            updateDistanceQuality((distance / renderDistance.coerceAtLeast(1)).toFloat(), distance)
         }
         if (ClientStateManager.config.audioAcoustics == AcousticQuality.OFF) return
-        val plane = toSourcePlane()
+        val plane = sourcePlane()
         DreamServices.registry.getOrNull(AudioAcousticsServices.ACOUSTICS)?.updateSource(
             uuid,
             SourceAcousticState(
@@ -1067,25 +1289,41 @@ class DisplayScreen(
                 muted = muted || focusMuted,
                 bypassSpatial = isPopoutActive,
                 acousticsEnabled = acousticsEnabled,
-                environment = probeEnvironment(plane),
+                environment = probeEnvironment(plane, distance),
             ),
         )
     }
 
-    /** Acoustic environment (voxel raytrace cached every [ENV_PROBE_INTERVAL_TICKS] ticks). */
-    private fun probeEnvironment(plane: SourcePlane): AcousticEnvironment {
+    private fun probeEnvironment(plane: SourcePlane, distance: Double): AcousticEnvironment {
         val tier = ClientStateManager.config.audioAcoustics
         if (isPopoutActive || !acousticsEnabled || (tier != AcousticQuality.ADVANCED && tier != AcousticQuality.ULTRA)) {
             cachedEnvironment = AcousticEnvironment.OPEN_AIR
+            cachedReverb = null
             envProbeCountdown = 0
             return cachedEnvironment
         }
-        if (envProbeCountdown <= 0) {
-            cachedEnvironment =
-                VoxelAcousticsProbe.probe(plane, ListenerPoseTracker.currentPose(Minecraft.getInstance()))
-            envProbeCountdown = ENV_PROBE_INTERVAL_TICKS
-        } else {
+        // Nothing to hear, nothing to trace: the raycasts run on the game thread, once per display
+        if (muted || focusMuted || volume <= 0f) return cachedEnvironment
+        reverbProbeCountdown--
+        if (envProbeCountdown > 0) {
             envProbeCountdown--
+            return cachedEnvironment
+        }
+        val listener = ListenerPoseTracker.currentPose(Minecraft.getInstance())
+        // A display an addon has moved holds its blocks in local space, so the sound is traced there.
+        val local = PlacedDisplays.localProbe(uuid, width, height, depth, facing, listener)
+        val probePlane = local?.plane ?: plane
+        val probeListener = local?.listener ?: listener
+        val reverb = cachedReverb?.takeIf { reverbProbeCountdown > 0 }
+            ?: VoxelAcousticsProbe.probeReverb(probePlane).also {
+                cachedReverb = it
+                reverbProbeCountdown = REVERB_PROBE_INTERVAL_TICKS
+            }
+        cachedEnvironment = reverb.copy(occlusion = VoxelAcousticsProbe.probeOcclusion(probePlane, probeListener))
+        envProbeCountdown = when {
+            distance < NEAR_PROBE_DISTANCE -> ENV_PROBE_INTERVAL_TICKS
+            distance < MID_PROBE_DISTANCE -> ENV_PROBE_INTERVAL_TICKS * 2
+            else -> ENV_PROBE_INTERVAL_TICKS * 4
         }
         return cachedEnvironment
     }
@@ -1097,44 +1335,57 @@ class DisplayScreen(
     }
 
     companion object {
-        /** Logger for replay-capture and diagnostic messages. */
-        private val logger = LoggerFactory.getLogger("DreamDisplays/DisplayScreen")
-
-        /** Ticks between voxel-acoustics re-probes; the DSP chain smooths across this gap. */
+        private val logger = LoggerFactory.getLogger(javaClass)
         private const val ENV_PROBE_INTERVAL_TICKS = 2
-
-        /** Grace window after a manual retry during which new media errors are swallowed rather than shown. */
+        private const val REVERB_PROBE_INTERVAL_TICKS = 40
+        private const val NEAR_PROBE_DISTANCE = 16.0
+        private const val MID_PROBE_DISTANCE = 48.0
         private val ERROR_RETRY_COOLDOWN = 15.seconds
 
         /** Initial per-display volume for newly seen displays. */
         internal fun defaultVolume(): Float {
             val serverDefault = ClientPacketManager.serverSnapshot.defaultVolume
             if (serverDefault >= 0f) return serverDefault.coerceIn(0f, MAX_SERVER_DEFAULT_VOLUME) // No to bad servers
-            return ClientDisplaySettings.DEFAULT_VOLUME
+            return ClientStateManager.config.newDisplayVolume.toFloat().coerceIn(0f, 1f)
         }
 
-        /** Fallback target quality (pixel height) when none is resolvable. */
         private const val DEFAULT_QUALITY = 1080
-
-        /** Quality rungs [applyDistanceSteps] moves down through, highest to lowest. */
         private val QUALITY_LADDER = intArrayOf(2160, 1440, 1080, 720, 480, 360, 240, 144)
-
-        /** Distance quality step down-thresholds as render-distance fraction. */
         private val DISTANCE_STEP_THRESHOLDS = floatArrayOf(0.66f, 0.75f)
-
-        /** Hysteresis to prevent quality flip-flop at step boundaries. */
         private const val DISTANCE_STEP_HYSTERESIS = 0.05f
 
-        /** Skip the restore seek when already within this tolerance of the saved position. */
+        private val SIZE_LOD_ENABLED: Boolean =
+            System.getProperty("dreamdisplays.lod.size")?.toBooleanStrictOrNull() ?: true
+
+        private const val SIZE_LOD_OVERSAMPLE = 1.5
+        private const val SIZE_LOD_MIN_HEIGHT = 360
+        private const val SIZE_LOD_UP_HYSTERESIS = 1.3
+        private const val SIZE_LOD_DWELL_NANOS = 3_000_000_000L
+        private const val LOD_SWITCH_SPACING_NANOS = 250_000_000L
+        private var nextLodSwitchNanos = 0L
+
+        private fun tryAcquireLodSwitch(): Boolean {
+            val now = System.nanoTime()
+            if (now < nextLodSwitchNanos) return false
+            nextLodSwitchNanos = now + LOD_SWITCH_SPACING_NANOS
+            return true
+        }
+
         private const val RESTORE_SEEK_TOLERANCE_NS = 250_000_000L
-
-        /** Duration of the first-frame fade-in (see [appearProgress]). */
         private const val APPEAR_FADE_NANOS = 260_000_000L
-
-        /** Self-heal timeout for [waitingForInitialTimeline] (prevents stranded "Waiting for video..."). */
         private const val WAITING_FOR_TIMELINE_TIMEOUT_NANOS = 5_000_000_000L
-
-        /** Maximum server-prescribed default volume accepted by the client (200% in the UI). */
         private const val MAX_SERVER_DEFAULT_VOLUME = 1.0f
+
+        /**
+         * How far displays stay alive, in blocks: the client's chunk render distance, capped by the
+         * server's simulation distance and by the viewer's own display distance setting, whichever is shortest.
+         */
+        internal fun clientRenderDistanceBlocks(): Int {
+            val minecraft = Minecraft.getInstance()
+            val render = minecraft.options.renderDistance().get()
+            val simulation = minecraft.level?.serverSimulationDistance?.takeIf { it > 0 } ?: render
+            val own = ClientStateManager.config.displayDistanceChunks.takeIf { it > 0 } ?: render
+            return minOf(render, simulation, own) * 16
+        }
     }
 }

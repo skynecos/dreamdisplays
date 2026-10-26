@@ -1,9 +1,9 @@
 package com.dreamdisplays.media.source
 
-import com.dreamdisplays.api.media.source.model.MediaMetadata
-import com.dreamdisplays.api.media.source.service.MediaResolverService
-import com.dreamdisplays.api.media.source.model.MediaSource
-import com.dreamdisplays.api.media.source.model.ResolvedMedia
+import com.dreamdisplays.api.media.source.MediaMetadata
+import com.dreamdisplays.api.media.source.MediaResolverService
+import com.dreamdisplays.api.media.source.MediaSource
+import com.dreamdisplays.api.media.source.ResolvedMedia
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -23,7 +23,7 @@ class DefaultMediaResolverRegistryTest {
         override fun canResolve(source: MediaSource): Boolean = true
 
         override fun resolve(source: MediaSource): ResolvedMedia =
-            ResolvedMedia(emptyList(), MediaMetadata.UNKNOWN, isLive = false, isSeekable = false)
+            ResolvedMedia([], MediaMetadata.UNKNOWN, isLive = false, isSeekable = false)
 
         override fun prefetch(source: MediaSource): Boolean {
             calls.incrementAndGet()
@@ -32,7 +32,6 @@ class DefaultMediaResolverRegistryTest {
         }
     }
 
-    /** Waits for the registry's background hint to settle, polling so a fast run finishes fast. */
     private fun awaitCalls(deadlineMs: Long = 2_000, check: () -> Boolean) {
         val until = System.nanoTime() + deadlineMs * 1_000_000
         while (System.nanoTime() < until) {

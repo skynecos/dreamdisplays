@@ -8,10 +8,9 @@
 <a href="https://ko-fi.com/arnodoelinger"><img src="https://i.imgur.com/L3Zx1Wu.png" height="48" alt="Ko-Fi"></a>
 </div>
 
-# Your world. Your screen
+# Bring real video playback to Minecraft
 
-Bring real video playback to Minecraft. Watch videos, livestreams, and more directly on in-game displays — together with
-your friends.
+Watch videos, livestreams, and more directly on in-game displays — together with your friends.
 
 Create a display, paste a link and that's it!
 
@@ -84,9 +83,6 @@ Dream Displays is built to make watching videos in Minecraft feel as natural as 
 
 # Get started
 Now it's your turn! Build your first display, invite your friends, and make displays a part of your world.
-
-This Kirazium branch adds synchronized WebVTT subtitles plus server-local MP4/VTT playback. See the
-[Kirazium VTT and local-media guide](docs/KIRAZIUM_VTT_LOCAL_MEDIA.md) for setup and commands.
 
 - [Install Dream Displays](https://github.com/arnodoelinger/dreamdisplays/wiki/%C2%A71.-Installation)
 - [Create your first display](https://github.com/arnodoelinger/dreamdisplays/wiki/%C2%A72.-Using-displays)

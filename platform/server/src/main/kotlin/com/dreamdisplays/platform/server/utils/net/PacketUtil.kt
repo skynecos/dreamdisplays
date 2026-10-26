@@ -1,57 +1,60 @@
 package com.dreamdisplays.platform.server.utils.net
 
 import com.dreamdisplays.api.display.model.property.DisplayRotation
+import com.dreamdisplays.api.playback.model.DisplayAccess
 import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.core.protocol.common.packets.ClearCache
 import com.dreamdisplays.core.protocol.common.packets.DisplayDelete
 import com.dreamdisplays.core.protocol.common.packets.DisplayInfo
 import com.dreamdisplays.core.protocol.common.packets.SetDisplaysEnabled
-import com.dreamdisplays.platform.server.PaperServer
-import com.dreamdisplays.platform.server.datatypes.sync.SyncData
 import com.dreamdisplays.platform.server.managers.PlayerManager
-import com.dreamdisplays.platform.server.media.LocalMediaServer
-import com.dreamdisplays.platform.server.playback.TimelineManager
-import com.dreamdisplays.platform.server.utils.net.PacketUtil.writeUUID
+import com.dreamdisplays.platform.server.media.LocalVttServer
 import io.github.arnodoelinger.platformweaver.PaperOnly
-import kotlinx.io.*
 import org.bukkit.block.BlockFace
 import org.bukkit.entity.Player
 import org.bukkit.util.Vector
 import org.jspecify.annotations.NullMarked
-import org.slf4j.LoggerFactory
 import java.util.*
 
+private const val VERTICAL_SINCE = "1.8.0"
+private const val CONFORMING_SINCE = "1.10.0-preview.3"
+
 /**
- * Returns true if the client identified by [uuid] runs a mod version that understands vertical
- * (`UP` / `DOWN`) display facings (>= 1.8.0). Older clients would crash decoding facing bytes 4/5,
- * so vertical displays are simply never sent to them. A missing version is treated as unsupported.
+ * @return `true` if the client identified by [uuid] runs a mod version that understands vertical
+ * display facings (>= 1.8.0).
+ *
+ * Older clients would crash decoding facing bytes, so vertical displays are simply never sent to them.
  */
 internal fun supportsVertical(uuid: UUID): Boolean {
     val v = PlayerManager.getVersion(uuid) ?: return false
-    return v.major > 1 || (v.major == 1 && v.minor >= 8)
+    return v.isGreaterThanOrEqualTo(VERTICAL_SINCE)
 }
 
 /**
- * Dual-protocol send facade for the Paper flavor. Each method partitions the recipients by
- * [V2PlayerTracker]: negotiated players receive protocol-v2 envelopes via [PaperV2Networking],
- * everyone else gets the FROZEN v1 plugin messages whose wire format must never change.
+ * @return `true` if the client identified by [uuid] can wrap a screen over slabs and stairs (>= 1.10.0 Preview 3).
+ *
+ * Older clients would draw a flat quad hanging in front of the steps, so wrapped displays are never sent to them.
+ */
+internal fun supportsConforming(uuid: UUID): Boolean {
+    val v = PlayerManager.getVersion(uuid) ?: return false
+    if (v.major != 1 || v.minor != 10 || v.patch != 0) return v.isGreaterThan(CONFORMING_SINCE)
+    val tag = v.preRelease.firstOrNull() ?: return true
+    if (tag == "dev") return true
+    return v.isGreaterThanOrEqualTo(CONFORMING_SINCE)
+}
+
+/** Whether the client identified by [uuid] understands a display with these traits. */
+internal fun canReceive(uuid: UUID, vertical: Boolean, conforming: Boolean): Boolean =
+    (!vertical || supportsVertical(uuid)) && (!conforming || supportsConforming(uuid))
+
+/**
+ * Protocol-v2 send facade for the Paper flavor. Only players that completed the v2 hello (see
+ * [V2PlayerTracker]) receive anything; protocol v1 is no longer supported.
  */
 @PaperOnly
 @NullMarked
 object PacketUtil {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/PacketUtil")
-    private const val CHANNEL_DISPLAY_INFO = "dreamdisplays:display_info"
-    private const val CHANNEL_SYNC = "dreamdisplays:sync"
-    private const val CHANNEL_DELETE = "dreamdisplays:delete"
-    private const val CHANNEL_PREMIUM = "dreamdisplays:premium"
-    private const val CHANNEL_IS_ADMIN = "dreamdisplays:is_admin"
-    private const val CHANNEL_DISPLAY_ENABLED = "dreamdisplays:display_enabled"
-    private const val CHANNEL_REPORT_ENABLED = "dreamdisplays:report_enabled"
-    private const val CHANNEL_CLEAR_CACHE = "dreamdisplays:clear_cache"
-
-    private val plugin: PaperServer by lazy { PaperServer.getInstance() }
-
-    /** Encodes and broadcasts a `display_info` packet describing a single display to [players]. */
+    /** Encodes and broadcasts a [DisplayInfo] packet describing a single display to [players]. */
     fun sendDisplayInfo(
         players: List<Player?>,
         id: UUID,
@@ -64,6 +67,7 @@ object PacketUtil {
         facing: BlockFace,
         isSync: Boolean,
         isLocked: Boolean = true,
+        access: DisplayAccess = DisplayAccess.DEFAULT,
         mode: PlaybackMode = if (isSync) PlaybackMode.SYNCED else PlaybackMode.LOCAL,
         qualityCap: Int = 0,
         rotation: DisplayRotation = DisplayRotation.NONE,
@@ -71,212 +75,57 @@ object PacketUtil {
         forced: Boolean = false,
         scheduledStartEpochMillis: Long = 0,
         scheduledAction: Int = -1,
-        subtitleUrl: String = "",
+        inRegion: Boolean = false,
+        isRegionMember: ((Player) -> Boolean)? = null,
+        depth: Int = 1,
+        conforming: Boolean = false,
+        customData: Map<String, ByteArray> = emptyMap(),
     ) {
         val isVertical = facing == BlockFace.UP || facing == BlockFace.DOWN
-        val clientUrl = LocalMediaServer.resolveForClient(url)
-        val clientSubtitleUrl = LocalMediaServer.resolveForClient(subtitleUrl)
-        val recipients = if (isVertical) players.filterNotNull().filter { supportsVertical(it.uniqueId) } else players
-        val (v2, players) = partition(recipients)
-        PaperV2Networking.send(
-            v2,
-            DisplayInfo(
-                id = id, ownerId = ownerId,
-                x = position.blockX, y = position.blockY, z = position.blockZ,
-                width = width, height = height, url = clientUrl,
-                facing = facing.toPacketByte().toInt(),
-                isSync = isSync, lang = lang, isLocked = isLocked,
-                mode = mode.wire, qualityCap = qualityCap,
-                rotation = rotation.quarterTurns,
-                virtual = virtual, forced = forced,
-                scheduledStartEpochMillis = scheduledStartEpochMillis, scheduledAction = scheduledAction,
-                subtitleUrl = clientSubtitleUrl,
-            ),
+        val recipients = v2Players(players).filter { canReceive(it.uniqueId, isVertical, conforming) }
+        val info = DisplayInfo(
+            id = id, ownerId = ownerId,
+            x = position.blockX, y = position.blockY, z = position.blockZ,
+            width = width, height = height, url = url,
+            facing = facing.toPacketByte(),
+            isSync = isSync, lang = lang, isLocked = isLocked,
+            mode = mode.wire, qualityCap = qualityCap,
+            rotation = rotation.quarterTurns,
+            virtual = virtual, forced = forced,
+            scheduledStartEpochMillis = scheduledStartEpochMillis, scheduledAction = scheduledAction,
+            access = access.wire, inRegion = inRegion,
+            depth = depth.coerceAtLeast(1), conforming = conforming,
+            customData = LocalVttServer.forClients(customData),
         )
-        if (players.isEmpty()) return
-        runCatching {
-            val packet = buildPacket { output ->
-                output.writeUUID(id)
-                output.writeUUID(ownerId)
-                output.writeVarInt(position.blockX)
-                output.writeVarInt(position.blockY)
-                output.writeVarInt(position.blockZ)
-                output.writeVarInt(width)
-                output.writeVarInt(height)
-                output.writeString(clientUrl)
-                output.writeByte(facing.toPacketByte())
-                output.writeBoolean(isSync)
-                output.writeString(lang)
-                output.writeBoolean(isLocked)
+        if (access == DisplayAccess.REGION && isRegionMember != null) {
+            recipients.forEach { player ->
+                PaperV2Networking.send([player], info.copy(viewerInRegion = isRegionMember(player)))
             }
-
-            sendPacket(players, CHANNEL_DISPLAY_INFO, packet)
-        }.onFailure { e ->
-            logger.warn("Failed to send display info packet", e)
-        }
-    }
-
-    /**
-     * Encodes and broadcasts a frozen-v1 `sync` packet. v2 timelines are server-authoritative
-     * (see [TimelineManager]), so this path serves v1 peers only.
-     */
-    fun sendSync(players: List<Player?>, syncData: SyncData) {
-        val id = syncData.id ?: return
-
-        val (_, players) = partition(players)
-        if (players.isEmpty()) return
-        runCatching {
-            val packet = buildPacket { output ->
-                output.writeUUID(id)
-                output.writeBoolean(syncData.isSync)
-                output.writeBoolean(syncData.currentState)
-                output.writeVarLong(syncData.currentTime)
-                output.writeVarLong(syncData.limitTime)
-            }
-
-            sendPacket(players, CHANNEL_SYNC, packet)
-        }.onFailure { e ->
-            logger.warn("Failed to send sync packet", e)
+        } else {
+            PaperV2Networking.send(recipients, info)
         }
     }
 
     /** Tells [players] to remove the display with [id] from their local registry. */
     fun sendDelete(players: List<Player?>, id: UUID) {
-        val (v2, players) = partition(players)
-        PaperV2Networking.send(v2, DisplayDelete(id))
-        if (players.isEmpty()) return
-        runCatching {
-            val packet = buildPacket { output ->
-                output.writeUUID(id)
-            }
-
-            sendPacket(players, CHANNEL_DELETE, packet)
-        }.onFailure { e ->
-            logger.warn("Failed to send delete packet", e)
-        }
-    }
-
-    /** Notifies [player] whether they currently have premium permissions. */
-    @Deprecated("Protocol v1 only; v2 bundles these flags in ServerHello. Remove when v1 support is dropped.")
-    fun sendPremium(player: Player, isPremium: Boolean) {
-        sendBooleanPacket(player, CHANNEL_PREMIUM, isPremium)
-    }
-
-    /** Notifies [player] whether they are recognized as an admin (for delete privileges). */
-    @Deprecated("Protocol v1 only; v2 bundles these flags in ServerHello. Remove when v1 support is dropped.")
-    fun sendIsAdmin(player: Player, isAdmin: Boolean) {
-        sendBooleanPacket(player, CHANNEL_IS_ADMIN, isAdmin)
+        PaperV2Networking.send(v2Players(players), DisplayDelete(id))
     }
 
     /** Pushes the global displays-enabled flag for [player] to the client. */
     fun sendDisplayEnabled(player: Player, isEnabled: Boolean) {
-        if (V2PlayerTracker.isV2(player.uniqueId)) {
-            PaperV2Networking.send(listOf(player), SetDisplaysEnabled(isEnabled))
-        } else {
-            sendBooleanPacket(player, CHANNEL_DISPLAY_ENABLED, isEnabled)
-        }
-    }
-
-    /** Tells the client whether the report feature is enabled (i.e., a webhook is configured). */
-    @Deprecated("Protocol v1 only; v2 bundles these flags in ServerHello. Remove when v1 support is dropped.")
-    fun sendReportEnabled(player: Player, isEnabled: Boolean) {
-        sendBooleanPacket(player, CHANNEL_REPORT_ENABLED, isEnabled)
+        PaperV2Networking.send(v2Players([player]), SetDisplaysEnabled(isEnabled))
     }
 
     /** Tells [players] to evict the listed display UUIDs from any local caches. */
     fun sendClearCache(players: List<Player?>, displayUuids: List<UUID>) {
         if (displayUuids.isEmpty()) return
-
-        val (v2, players) = partition(players)
-        PaperV2Networking.send(v2, ClearCache(displayUuids))
-        if (players.isEmpty()) return
-        runCatching {
-            val packet = buildPacket { output ->
-                output.writeVarInt(displayUuids.size)
-                displayUuids.forEach { uuid ->
-                    output.writeUUID(uuid)
-                }
-            }
-
-            sendPacket(players, CHANNEL_CLEAR_CACHE, packet)
-        }.onFailure { e ->
-            logger.warn("Failed to send clear cache packet", e)
-        }
+        PaperV2Networking.send(v2Players(players), ClearCache(displayUuids))
     }
 
-    /** Splits the recipients into (v2-negotiated, legacy) lists. */
-    private fun partition(players: List<Player?>): Pair<List<Player>, List<Player>> =
-        players.filterNotNull().partition { V2PlayerTracker.isV2(it.uniqueId) }
+    private fun v2Players(players: List<Player?>): List<Player> =
+        players.filterNotNull().filter { V2PlayerTracker.isV2(it.uniqueId) }
 
-    /** Sends a one-byte boolean payload on [channel] to [player], swallowing IO errors with a warning. */
-    private fun sendBooleanPacket(player: Player, channel: String, value: Boolean) {
-        runCatching {
-            val packet = buildPacket { output ->
-                output.writeBoolean(value)
-            }
-            player.sendPluginMessage(plugin, channel, packet)
-        }.onFailure { e ->
-            logger.warn("Failed to send $channel packet", e)
-        }
-    }
-
-    /** Allocates a buffer, runs [builder] against a [Sink] and returns the resulting bytes. */
-    private fun buildPacket(builder: (Sink) -> Unit): ByteArray {
-        val buffer = Buffer()
-        builder(buffer)
-        return buffer.readByteArray()
-    }
-
-    /** Sends an already-built [packet] on [channel] to every non-null player in [players]. */
-    private fun sendPacket(players: List<Player?>, channel: String, packet: ByteArray) {
-        players.filterNotNull().forEach { player ->
-            player.sendPluginMessage(plugin, channel, packet)
-        }
-    }
-
-    /** Writes a UUID as two big-endian longs. */
-    private fun Sink.writeUUID(uuid: UUID) {
-        writeLong(uuid.mostSignificantBits)
-        writeLong(uuid.leastSignificantBits)
-    }
-
-    /** Writes [value] in Minecraft's VarInt encoding (1–5 bytes). */
-    private fun Sink.writeVarInt(value: Int) {
-        var current = value
-        while ((current and -0x80) != 0) {
-            writeByte(((current and 0x7F) or 0x80).toByte())
-            current = current ushr 7
-        }
-        writeByte((current and 0x7F).toByte())
-    }
-
-    /** Writes [value] in Minecraft's VarLong encoding (1–10 bytes). */
-    private fun Sink.writeVarLong(value: Long) {
-        var current = value
-        while (true) {
-            if ((current and 0x7FL.inv()) == 0L) {
-                writeByte(current.toByte())
-                return
-            }
-            writeByte(((current.toInt() and 0x7F) or 0x80).toByte())
-            current = current ushr 7
-        }
-    }
-
-    /** Writes a single byte, 1 for `true` and 0 for `false`. */
-    private fun Sink.writeBoolean(value: Boolean) {
-        writeByte(if (value) 1 else 0)
-    }
-
-    /** Writes [text] as UTF-8 bytes prefixed by its byte length as a VarInt. */
-    private fun Sink.writeString(text: String) {
-        val bytes = text.encodeToByteArray()
-        writeVarInt(bytes.size)
-        write(bytes)
-    }
-
-    /** Maps a [BlockFace] to its wire byte; faces not in the protocol fall back to north. */
-    private fun BlockFace.toPacketByte(): Byte = when (this) {
+    private fun BlockFace.toPacketByte(): Int = when (this) {
         BlockFace.NORTH -> 0
         BlockFace.EAST -> 1
         BlockFace.SOUTH -> 2
@@ -284,44 +133,5 @@ object PacketUtil {
         BlockFace.UP -> 4
         BlockFace.DOWN -> 5
         else -> 0
-    }
-
-    /** Reads a UUID encoded as two big-endian longs by [writeUUID]. */
-    fun Source.readUUID(): UUID {
-        return UUID(readLong(), readLong())
-    }
-
-    /** Decodes a VarInt; throws [IOException] if the encoding exceeds 5 bytes. */
-    fun Source.readVarInt(): Int {
-        var result = 0
-        var shift = 0
-        var byte: Int
-
-        do {
-            if (shift >= 35) throw IOException("VarInt is too big.")
-
-            byte = readByte().toInt() and 0xFF
-            result = result or ((byte and 0x7F) shl shift)
-            shift += 7
-        } while ((byte and 0x80) != 0)
-
-        return result
-    }
-
-    /** Decodes a VarLong; throws if the encoding exceeds 10 bytes. */
-    fun Source.readVarLong(): Long {
-        var result = 0L
-        var shift = 0
-        var byte: Byte
-
-        do {
-            if (shift >= 70) throw RuntimeException("VarLong is too big.")
-
-            byte = readByte()
-            result = result or ((byte.toInt() and 0x7F).toLong() shl shift)
-            shift += 7
-        } while ((byte.toInt() and 0x80) != 0)
-
-        return result
     }
 }

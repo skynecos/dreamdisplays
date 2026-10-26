@@ -2,12 +2,13 @@ package com.dreamdisplays.platform.server
 
 import com.dreamdisplays.platform.server.ModLoaderOnly
 import com.dreamdisplays.platform.server.managers.DisplayManager
-import com.dreamdisplays.platform.server.managers.StateManager
 import com.dreamdisplays.platform.server.managers.StorageManager
+import com.dreamdisplays.platform.server.managers.VanillaSelectionVisualizer
 import com.dreamdisplays.platform.server.meta.ServerCoroutines
 import com.dreamdisplays.platform.server.meta.Updater
 import com.dreamdisplays.platform.server.playback.*
 import com.dreamdisplays.platform.server.proxy.VanillaProxyBridge
+import com.dreamdisplays.platform.server.api.VanillaServerApi
 import com.dreamdisplays.platform.server.storage.StorageBackend
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -47,16 +48,17 @@ object VanillaBootstrap {
             VanillaServerState.config.proxy.clock_sync_interval
         )
         startRepeatingTasks(server)
+        VanillaServerApi.start()
     }
 
     /** Persists all displays and disconnects storage. */
     fun onServerStopping() {
+        VanillaServerApi.stop()
         DisplayManager.save { VanillaServerState.storage?.saveDisplay(it) }
         ServerCoroutines.shutdown()
         VanillaServerState.storage?.disconnect()
     }
 
-    /** Starts repeating coroutines for display updates and update checking on [ServerCoroutines.io]. */
     private fun startRepeatingTasks(server: MinecraftServer) {
         val settings = VanillaServerState.config.settings
 
@@ -66,12 +68,20 @@ object VanillaBootstrap {
                 runCatching {
                     server.execute {
                         DisplayManager.updateAllDisplays(server)
-                        StateManager.tickBroadcast(server)
                         TimelineManager.tick()
                         WatchPartyManager.tick()
                         FullscreenBroadcastManager.tick()
                         VanillaProxyBridge.tick(server)
                     }
+                }
+            }
+        }
+
+        if (settings.particlesEnabled) {
+            ServerCoroutines.io.launch {
+                while (!server.isStopped) {
+                    delay((settings.particleRenderDelay * 50L).milliseconds)
+                    runCatching { server.execute { VanillaSelectionVisualizer.tick(server) } }
                 }
             }
         }

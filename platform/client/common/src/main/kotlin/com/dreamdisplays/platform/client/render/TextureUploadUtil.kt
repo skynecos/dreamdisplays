@@ -1,9 +1,11 @@
 package com.dreamdisplays.platform.client.render
 
 //? if >=1.21.11 {
-import com.mojang.blaze3d.opengl.GlTexture
 import com.mojang.blaze3d.systems.RenderSystem
+//? if <26.3 {
+import com.mojang.blaze3d.opengl.GlTexture
 import com.mojang.blaze3d.textures.GpuTexture
+//?}
 //?}
 import com.mojang.blaze3d.platform.NativeImage
 import net.minecraft.client.renderer.texture.DynamicTexture
@@ -22,10 +24,11 @@ object TextureUploadUtil {
         val glId = (tex.getTexture() as? GlTexture)?.glId() ?: return
         //?} else
         /*val glId = tex.getId()*/
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, glId)
+        // Bind through the state cache
+        bindTexture2D(stateCache = true, id = glId)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR)
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0)
+        bindTexture2D(stateCache = true, id = 0)
     }
 
     /** Uploads raw pixels into a [DynamicTexture] across both legacy GL-id and new GpuTexture APIs. */
@@ -56,6 +59,7 @@ object TextureUploadUtil {
 
     //? if >=1.21.11 {
     /** Uploads a raw RGB24 video frame to a Minecraft texture. */
+    @Suppress("UNUSED")
     fun uploadRgb(
         texture: GpuTexture,
         src: ByteBuffer,
@@ -142,46 +146,40 @@ object TextureUploadUtil {
         }
     }
 
-    /** Write to a Minecraft texture using the `writeToTexture` method. */
-    private fun writeToTexture(texture: GpuTexture, pixels: ByteBuffer, w: Int, h: Int, format: NativeImage.Format) {
-        val encoder = RenderSystem.getDevice().createCommandEncoder()
-        val encoderClass = encoder.javaClass
+    private class WriteMethod(val method: Method, val takesFormat: Boolean)
 
-        try {
-            encoderClass
-                .getMethod(
-                    "writeToTexture",
-                    GpuTexture::class.java,
-                    ByteBuffer::class.java,
-                    NativeImage.Format::class.java,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                    Int::class.javaPrimitiveType,
-                )
-                .invokeOrThrowTarget(encoder, texture, pixels, format, 0, 0, 0, 0, w, h)
-            return
-        } catch (_: NoSuchMethodException) {
-        }
+    private val writeMethods = java.util.concurrent.ConcurrentHashMap<Class<*>, WriteMethod>()
 
-        encoderClass
-            .getMethod(
-                "writeToTexture",
-                GpuTexture::class.java,
-                ByteBuffer::class.java,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
+    private fun resolveWriteMethod(encoderClass: Class<*>): WriteMethod {
+        val int = Int::class.javaPrimitiveType
+        return try {
+            WriteMethod(
+                encoderClass.getMethod(
+                    "writeToTexture", GpuTexture::class.java, ByteBuffer::class.java, NativeImage.Format::class.java,
+                    int, int, int, int, int, int,
+                ),
+                takesFormat = true,
             )
-            .invokeOrThrowTarget(encoder, texture, pixels, 0, 0, 0, 0, w, h)
+        } catch (_: NoSuchMethodException) {
+            WriteMethod(
+                encoderClass.getMethod(
+                    "writeToTexture", GpuTexture::class.java, ByteBuffer::class.java, int, int, int, int, int, int,
+                ),
+                takesFormat = false,
+            )
+        }
     }
 
-    /** Invokes the given method on the given target. Throws the target exception if any. */
+    private fun writeToTexture(texture: GpuTexture, pixels: ByteBuffer, w: Int, h: Int, format: NativeImage.Format) {
+        val encoder = RenderSystem.getDevice().createCommandEncoder()
+        val write = writeMethods.getOrPut(encoder.javaClass) { resolveWriteMethod(encoder.javaClass) }
+        if (write.takesFormat) {
+            write.method.invokeOrThrowTarget(encoder, texture, pixels, format, 0, 0, 0, 0, w, h)
+        } else {
+            write.method.invokeOrThrowTarget(encoder, texture, pixels, 0, 0, 0, 0, w, h)
+        }
+    }
+
     private fun Method.invokeOrThrowTarget(target: Any, vararg args: Any?) {
         try {
             invoke(target, *args)
@@ -191,7 +189,6 @@ object TextureUploadUtil {
     }
     //?}
 
-    /** RGB24 -> RGBA32 conversion. */
     private fun rgbToRgba(src: ByteBuffer, dst: ByteBuffer, w: Int, h: Int) {
         val size = w * h * 3
         if (size <= 0 || src.remaining() < size) return

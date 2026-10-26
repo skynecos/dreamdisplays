@@ -1,6 +1,6 @@
 package com.dreamdisplays.media.source.kick
 
-import com.dreamdisplays.api.media.source.model.MediaSource
+import com.dreamdisplays.api.media.source.MediaSource
 import com.dreamdisplays.media.source.platform.PlatformMetadataCache
 import com.dreamdisplays.media.source.platform.PlatformVideoMetadata
 import com.dreamdisplays.media.source.platform.YtDlpMetadataFallback
@@ -30,7 +30,6 @@ object KickMetadataCache {
         else -> null
     }
 
-    /** Reconstructs the [MediaSource.Kick] the fetch needs from a [cacheKey]. */
     private fun sourceFor(key: String): MediaSource.Kick {
         val value = key.substringAfter(':')
         return if (key.startsWith("video:")) {

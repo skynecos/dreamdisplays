@@ -1,22 +1,24 @@
 package com.dreamdisplays.platform.server.commands.subcommands
 
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.platform.server.ModLoaderOnly
-import com.dreamdisplays.api.media.source.url.YouTubeUrls
-import com.dreamdisplays.api.media.source.url.CustomMediaUrls
-import com.dreamdisplays.api.playback.policy.PlaybackPermissions
-import com.dreamdisplays.api.security.model.LanguageTag
-import com.dreamdisplays.api.security.policy.MediaUrlPolicy
+import com.dreamdisplays.api.media.source.MediaSource
+import com.dreamdisplays.shared.playback.PlaybackPermissions
+import com.dreamdisplays.shared.policy.LanguageTag
+import com.dreamdisplays.shared.policy.MediaUrlPolicy
 import com.dreamdisplays.platform.server.PaperServer
+import com.dreamdisplays.platform.server.api.ServerApiHost
 import com.dreamdisplays.platform.server.VanillaServerState
 import com.dreamdisplays.platform.server.datatypes.display.PaperDisplayData
 import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
 import com.dreamdisplays.platform.server.managers.DisplayManager
-import com.dreamdisplays.platform.server.managers.StateManager
 import com.dreamdisplays.platform.server.meta.Scheduler.runAsync
 import com.dreamdisplays.platform.server.meta.ServerCoroutines
 import com.dreamdisplays.platform.server.playback.PlaybackContexts
 import com.dreamdisplays.platform.server.playback.TimelineManager
 import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.VanillaPermissions
 import com.dreamdisplays.platform.server.utils.net.CustomMediaGate
 import com.dreamdisplays.platform.server.utils.net.VanillaDisplayActions
@@ -35,21 +37,16 @@ import java.util.*
  * Handles the `/display video` command. Assigns a YouTube URL (and optional audio language)
  * to the display the player is looking at, after validating ownership.
  */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @PaperOnly
 class VideoCommand : SubCommand {
     override val name = "video"
     override val permission = PaperServer.config.permissions.video
     override val playerOnly = true
 
-    /**
-     * Assigns a YouTube URL (and optional language) to the targeted display owned by the player,
-     * rebroadcasting the new state and resetting sync playback when the display was synced.
-     */
     override fun execute(sender: CommandSender, args: Array<String?>) {
         val player = (sender as? Player) ?: return
         if (args.size < 2) {
-            MessageUtil.sendMessage(player, "invalidURL")
+            ServerMessage.INVALID_URL.sendTo(player)
             return
         }
         val token = args[0] ?: "this"
@@ -58,17 +55,17 @@ class VideoCommand : SubCommand {
         // menu takes work here too, subject to the same server policy applied further down.
         val requestedUrl = canonicalUrl(args[1] ?: "")
         if (requestedUrl == null) {
-            MessageUtil.sendMessage(player, "invalidURL")
+            ServerMessage.INVALID_URL.sendTo(player)
             return
         }
 
         val data = resolvePaperDisplayTarget(sender, player, token) as? PaperDisplayData ?: return
 
         if (!PlaybackPermissions.canSetVideo(
-                PlaybackContexts.of(data, player.uniqueId, player.hasPermission(PaperServer.config.permissions.delete))
+                PlaybackContexts.of(data, player.uniqueId, player.hasPermission(PaperServer.config.permissions.deleteOthers))
             )
         ) {
-            MessageUtil.sendMessage(player, "displayVideoNotOwner")
+            ServerMessage.DISPLAY_VIDEO_NOT_OWNER.sendTo(player)
             return
         }
 
@@ -82,28 +79,25 @@ class VideoCommand : SubCommand {
             return
         }
 
-        val videoChanged = data.url != requestedUrl
-        val wasSync = data.isSync
         data.apply {
+            if (url != requestedUrl) VttSubtitleSource.write(customData, "")
             url = requestedUrl
             lang = LanguageTag.canonicalAudioCode(args.getOrNull(2)).value
-            if (videoChanged) subtitleUrl = ""
         }
 
         runAsync { PaperServer.getInstance().storage.saveDisplay(data) }
         DisplayManager.broadcastUpdate(data)
-        if (wasSync) StateManager.resetAndBroadcast(data)
         TimelineManager.onVideoChanged(data)
+        ServerApiHost.current?.urlChanged(data)
 
-        MessageUtil.sendMessage(player, "settedURL")
+        ServerMessage.SETTED_URL.sendTo(player)
     }
 
-    /** Suggests known two-letter language codes when completing the third argument. */
     override fun complete(sender: CommandSender, args: Array<String?>): List<String> {
         if (args.size == 3) {
             return languageSuggestions
         }
-        return emptyList()
+        return []
     }
 
     companion object {
@@ -128,22 +122,17 @@ class VideoCommand : SubCommand {
     }
 }
 
-/**
- * Canonical URL for [raw] as typed on the command line, or null when it is not something the mod could ever play or is
- * blocked by [MediaUrlPolicy].
- */
 private fun canonicalUrl(raw: String): String? {
     val input = raw.trim()
     if (input.isEmpty()) return null
-    YouTubeUrls.extractVideoIdTyped(input)?.let { return YouTubeUrls.watchUrl(it) }
-    val normalized = CustomMediaUrls.normalize(input) ?: return null
-    return normalized.takeIf { MediaUrlPolicy.isAllowed(it) }
+    val resolvable = MediaSource.from(input).toResolvableUrl() ?: return null
+    if (!resolvable.contains("://")) return null
+    return resolvable.takeIf { MediaUrlPolicy.isAllowed(it) }
 }
 
 /**
  * Shared `Fabric` / `NeoForge` implementation of the `/display video` command.
  */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @ModLoaderOnly
 object VanillaVideoCommand {
     /** Assigns a YouTube URL (and optional language) to the targeted display, after validating ownership. */
@@ -156,12 +145,12 @@ object VanillaVideoCommand {
         val langRaw = if (parts.size > 1) parts.last() else ""
 
         if (urlRaw.isBlank()) {
-            MessageUtil.sendMessage(player, "invalidURL")
+            ServerMessage.INVALID_URL.sendTo(player)
             return 0
         }
 
         val requestedUrl = canonicalUrl(urlRaw)
-            ?: return MessageUtil.sendMessage(player, "invalidURL").let { 0 }
+            ?: return ServerMessage.INVALID_URL.sendTo(player).let { 0 }
 
         val data = resolveVanillaDisplayTarget(player, token) as? VanillaDisplayData ?: return 0
 
@@ -169,7 +158,7 @@ object VanillaVideoCommand {
                 PlaybackContexts.of(data, player.uuid, VanillaDisplayActions.isAdmin(player))
             )
         ) {
-            MessageUtil.sendMessage(player, "displayVideoNotOwner")
+            ServerMessage.DISPLAY_VIDEO_NOT_OWNER.sendTo(player)
             return 0
         }
 
@@ -187,19 +176,17 @@ object VanillaVideoCommand {
             return 0
         }
 
-        val videoChanged = data.url != requestedUrl
-        val wasSync = data.isSync
+        if (data.url != requestedUrl) VttSubtitleSource.write(data.customData, "")
         data.url = requestedUrl
         data.lang = LanguageTag.canonicalAudioCode(langRaw).value
-        if (videoChanged) data.subtitleUrl = ""
         ServerCoroutines.io.launch { VanillaServerState.storage?.saveDisplay(data) }
 
         val receivers = DisplayManager.getReceivers(data, ctx.source.server)
         VanillaPacketUtil.sendDisplayInfo(receivers, data)
-        if (wasSync) StateManager.resetAndBroadcast(data.id, receivers)
         TimelineManager.onVideoChanged(data)
+        ServerApiHost.current?.urlChanged(data)
 
-        MessageUtil.sendMessage(player, "settedURL")
+        ServerMessage.SETTED_URL.sendTo(player)
         return 1
     }
 }

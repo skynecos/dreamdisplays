@@ -1,6 +1,6 @@
 package com.dreamdisplays.media.source.platform
 
-import com.dreamdisplays.api.media.source.model.ResolvedMedia
+import com.dreamdisplays.api.media.source.ResolvedMedia
 import com.github.benmanes.caffeine.cache.Cache
 import com.github.benmanes.caffeine.cache.Caffeine
 import com.github.benmanes.caffeine.cache.Expiry
@@ -15,10 +15,8 @@ class LiveAwareResolvedMediaCache(
     private val liveTtlSeconds: Long,
     private val staticTtlMinutes: Long,
 ) {
-    /** A cache entry that stores the [ResolvedMedia] and its TTL in nanoseconds. */
     private class Entry(val value: ResolvedMedia, val ttlNanos: Long)
 
-    /** Caffeine cache with a custom expiry that uses the [Entry.ttlNanos] for live vs static entries. */
     private val cache: Cache<String, Entry> = Caffeine.newBuilder()
         .maximumSize(maxSize)
         .expireAfter(object : Expiry<String, Entry> {

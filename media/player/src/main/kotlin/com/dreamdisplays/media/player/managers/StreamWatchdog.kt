@@ -17,21 +17,13 @@ internal class StreamWatchdog(
     private val checkIntervalMs: Long = 1_000L,
     private val onStall: () -> Unit,
 ) {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/StreamWatchdog")
+    private val logger = LoggerFactory.getLogger(javaClass)
 
-    /** Watchdog task. */
     @Volatile
     private var job: Job? = null
-
-    /**
-     * Whether any frame has arrived since [start], and the stamp that decided it. Derived from the
-     * stamp moving rather than from a callback, so it holds for every way a session can begin —
-     * cold start, in-place seek, quality handoff, reappearance bridge.
-     */
     private var deliveredAFrame = false
     private var lastSeenStamp = 0L
-
-    /** Coroutine scope for the watchdog task. */
+    private var silentSinceNanos = 0L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("MediaPlayer-watchdog"))
 
     /** Start watchdog. */
@@ -39,6 +31,7 @@ internal class StreamWatchdog(
         stop()
         deliveredAFrame = false
         lastSeenStamp = getLastFrameNanos()
+        silentSinceNanos = System.nanoTime()
         job = scope.launch {
             delay(checkIntervalMs.milliseconds)
             // Stops at the first stall: recovery is the caller's job, and it restarts the watchdog
@@ -54,19 +47,19 @@ internal class StreamWatchdog(
         job = null
     }
 
-    /**
-     * One pass over [stallThresholdMs] / [startupThresholdMs]. Returns false once [onStall] has been called, which ends
-     * the watchdog's polling loop.
-     */
     private fun check(): Boolean {
         return runCatching {
-            if (!isSessionActive()) return true
+            if (!isSessionActive()) {
+                silentSinceNanos = System.nanoTime()
+                return true
+            }
             val stamp = getLastFrameNanos()
             if (stamp != lastSeenStamp) {
                 lastSeenStamp = stamp
                 deliveredAFrame = true
+                silentSinceNanos = stamp
             }
-            val silenceMs = (System.nanoTime() - stamp) / 1_000_000L
+            val silenceMs = (System.nanoTime() - silentSinceNanos) / 1_000_000L
             if (silenceMs < (if (deliveredAFrame) stallThresholdMs else startupThresholdMs)) return true
             val what = if (deliveredAFrame) "No frames for $silenceMs ms" else "No first frame after $silenceMs ms"
             logger.warn("$debugLabel $what. Restarting...")

@@ -1,7 +1,7 @@
 package com.dreamdisplays.media.source
 
-import com.dreamdisplays.api.media.source.service.MediaResolverService
-import com.dreamdisplays.api.media.source.service.MediaResolverProvider
+import com.dreamdisplays.api.media.source.MediaResolverService
+import com.dreamdisplays.api.media.source.MediaResolverProvider
 import com.dreamdisplays.media.source.bilibili.BilibiliResolver
 import com.dreamdisplays.media.source.direct.DirectStreamResolver
 import com.dreamdisplays.media.source.kick.KickResolver
@@ -15,7 +15,7 @@ import com.dreamdisplays.media.source.youtube.YtDlpResolver
  * Bilibili), then `yt-dlp` fallback.
  */
 object DefaultMediaResolverProvider : MediaResolverProvider {
-    override fun resolvers(): List<MediaResolverService> = listOf(
+    override fun resolvers(): List<MediaResolverService> = [
         DirectStreamResolver,
         NewPipeResolver,
         TwitchResolver,
@@ -23,5 +23,5 @@ object DefaultMediaResolverProvider : MediaResolverProvider {
         KickResolver,
         BilibiliResolver,
         YtDlpResolver,
-    )
+    ]
 }

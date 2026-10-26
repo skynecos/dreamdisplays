@@ -1,11 +1,15 @@
 package com.dreamdisplays.platform.server.managers
 
+import com.dreamdisplays.api.playback.model.DisplayAccess
 import com.dreamdisplays.api.playback.model.PlaybackAction
 import com.dreamdisplays.api.playback.model.PlaybackMode
-import com.dreamdisplays.api.security.policy.MediaUrlPolicy
+import com.dreamdisplays.shared.policy.MediaUrlPolicy
 import com.dreamdisplays.platform.server.datatypes.display.DisplayData
 import com.dreamdisplays.platform.server.datatypes.display.PaperDisplayData
 import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
+import com.dreamdisplays.platform.server.storage.CustomDataCodec
+import com.dreamdisplays.platform.server.storage.IsolatedSqliteDataSource
+import com.dreamdisplays.platform.server.storage.LegacySubtitleMigration
 import com.dreamdisplays.platform.server.storage.StorageBackend
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.DIRECTION_TO_ORDINAL
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.ORDINAL_TO_DIRECTION
@@ -14,6 +18,7 @@ import com.dreamdisplays.platform.server.utils.StoragePackingUtil.packInts
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.packPos
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.toBytes
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.toUUID
+import com.dreamdisplays.platform.server.utils.StoragePackingUtil.unpackConforming
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.unpackFacingOrdinal
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.unpackInts
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.unpackPos
@@ -80,11 +85,18 @@ class DisplaysTable(prefix: String = "") : Table("${prefix}displays") {
     /** String representing the language code of the video associated with the display. */
     val lang = varchar("lang", 255).default("")
 
-    /** Optional WebVTT source URL or Paper-local `ddfile:` reference. */
-    val subtitleUrl = varchar("subtitleUrl", MediaUrlPolicy.MAX_URL_LENGTH).default("")
-
-    /** Boolean indicating whether the display is locked to its owner. */
+    /**
+     * Legacy locked flag, still written so a downgrade keeps working. Superseded by [access], which
+     * distinguishes the region level the boolean could not express.
+     */
     val isLocked = bool("isLocked").default(true)
+
+    /**
+     * Wire ordinal of the display's [com.dreamdisplays.api.playback.model.DisplayAccess]. Nullable so
+     * rows written before this column existed are recognisable and fall back to [isLocked] on load,
+     * instead of every one of them reading as the column default.
+     */
+    val access = integer("access").nullable()
 
     /** Integer representing the playback mode of the display. */
     val mode = integer("mode").default(PlaybackMode.LOCAL.wire)
@@ -92,13 +104,15 @@ class DisplaysTable(prefix: String = "") : Table("${prefix}displays") {
     /** Optional, space-free alias usable anywhere a display id is accepted; unique across displays. */
     val name = varchar("name", 32).nullable()
 
+    /** Data addons keep on the display. */
+    val customData = text("customData").nullable()
+
     /** Epoch millis of a pending scheduled-playback start, or null when no schedule is set. */
     val scheduledStart = long("scheduledStart").nullable()
 
     /** Wire ordinal of the [com.dreamdisplays.api.playback.model.PlaybackAction] [scheduledStart] will apply, or null. */
     val scheduledAction = integer("scheduledAction").nullable()
 
-    /** Primary key for the displays table, which is the unique identifier of the display. */
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -117,15 +131,21 @@ class StorageManager(
     username: String = "",
     password: String = "",
     useSSL: Boolean = false,
-    private val logger: Logger = LoggerFactory.getLogger("DreamDisplays/Storage"),
 ) {
+    private val logger: Logger = LoggerFactory.getLogger(javaClass)
     private val table = DisplaysTable(tablePrefix)
+    private val legacyMediaDirectory = File(dataDir, "media").toPath()
+
+    private val jdbcUrl = when (backend) {
+        StorageBackend.SQLITE -> "jdbc:sqlite:${File(dataDir, "dreamdisplays.db").absolutePath}"
+        StorageBackend.MYSQL -> "jdbc:mysql://$host:$port/$database?autoReconnect=true&useSSL=$useSSL&useInformationSchema=false"
+    }
+
+    private val isolatedSqlite =
+        if (backend == StorageBackend.SQLITE) IsolatedSqliteDataSource.createOrNull(jdbcUrl) else null
 
     private val dataSource = HikariDataSource(HikariConfig().apply {
-        jdbcUrl = when (backend) {
-            StorageBackend.SQLITE -> "jdbc:sqlite:${File(dataDir, "dreamdisplays.db").absolutePath}"
-            StorageBackend.MYSQL -> "jdbc:mysql://$host:$port/$database?autoReconnect=true&useSSL=$useSSL&useInformationSchema=false"
-        }
+        if (isolatedSqlite != null) dataSource = isolatedSqlite else jdbcUrl = this@StorageManager.jdbcUrl
         if (backend != StorageBackend.SQLITE) {
             this.username = username
             this.password = password
@@ -136,21 +156,37 @@ class StorageManager(
         isAutoCommit = false
     })
 
-    /** Exposed database connection. */
     private val db = Database.connect(dataSource)
 
     /**
-     * Creates the displays table if missing, applies in-place column migrations (`lang`, `isLocked`, `videoCode` widening),
-     * and loads previously stored displays into the runtime registry.
+     * Creates the displays table if missing and applies in-place column migrations (`lang`, `isLocked`, `videoCode`
+     * widening). Drop-column statements are filtered out.
      */
     fun createSchema() {
         transaction(db) {
-            MigrationUtils.statementsRequiredForDatabaseMigration(table).forEach { stmt -> exec(stmt) }
+            MigrationUtils.statementsRequiredForDatabaseMigration(table)
+                .filterNot { it.contains("DROP COLUMN", ignoreCase = true) }
+                .forEach { stmt -> exec(stmt) }
+        }
+        dataSource.connection.use { connection ->
+            try {
+                val imported = LegacySubtitleMigration.migrate(connection, table.tableName) { source ->
+                    LegacySubtitleMigration.validLegacySource(source, legacyMediaDirectory)
+                }
+                connection.commit()
+                if (imported > 0) logger.info("Imported {} existing WebVTT subtitle sources.", imported)
+            } catch (error: Exception) {
+                connection.rollback()
+                throw error
+            }
         }
     }
 
     /** Persists all in-memory displays and closes the database connection on plugin shutdown. */
-    fun disconnect() = dataSource.close()
+    fun disconnect() {
+        dataSource.close()
+        isolatedSqlite?.close()
+    }
 
     /** Load all displays from the database, returning a list of [DisplayData] objects. */
     @PaperOnly
@@ -169,14 +205,13 @@ class StorageManager(
             data, worldName,
             packPos(data.pos1.blockX, data.pos1.blockY, data.pos1.blockZ),
             packPos(data.pos2.blockX, data.pos2.blockY, data.pos2.blockZ),
-            packFacing(data.facing.ordinal, data.rotation)
+            packFacing(data.facing.ordinal, data.rotation, data.conforming)
         )
     }
 
     /** Deletes the display with the given [data] from the displays table. */
     fun deleteDisplay(data: DisplayData) = delete(data.id)
 
-    /** Converts a row from the displays table into a [PaperDisplayData] object, or null if the row */
     @PaperOnly
     private fun rowToPaper(row: ResultRow): PaperDisplayData? {
         val id = row[table.id].toUUID()
@@ -198,6 +233,7 @@ class StorageManager(
             Location(world, x1.toDouble(), y1.toDouble(), z1.toDouble()),
             Location(world, x2.toDouble(), y2.toDouble(), z2.toDouble()),
             w, h, facing, rotation,
+            conforming = unpackConforming(row[table.facing]),
         ).applyCommon(row)
     }
 
@@ -212,11 +248,10 @@ class StorageManager(
             data, data.worldKey,
             packPos(data.pos1.x, data.pos1.y, data.pos1.z),
             packPos(data.pos2.x, data.pos2.y, data.pos2.z),
-            packFacing(DIRECTION_TO_ORDINAL.getValue(data.facing), data.rotation)
+            packFacing(DIRECTION_TO_ORDINAL.getValue(data.facing), data.rotation, data.conforming)
         )
     }
 
-    /** Converts a row from the displays table into a [VanillaDisplayData] object. */
     private fun rowToVanilla(row: ResultRow): VanillaDisplayData {
         val (x1, y1, z1) = unpackPos(row[table.pos1])
         val (x2, y2, z2) = unpackPos(row[table.pos2])
@@ -229,10 +264,10 @@ class StorageManager(
             row[table.world],
             BlockPos(x1, y1, z1), BlockPos(x2, y2, z2),
             w, h, facing, rotation,
+            conforming = unpackConforming(row[table.facing]),
         ).applyCommon(row)
     }
 
-    /** Upserts the given display data into the displays table. */
     private fun upsert(data: DisplayData, worldName: String, p1: Long, p2: Long, facingOrd: Int) {
         transaction(db) {
             table.replace {
@@ -247,22 +282,21 @@ class StorageManager(
                 it[isSync] = data.isSync
                 it[duration] = data.duration
                 it[lang] = data.lang
-                it[subtitleUrl] = data.subtitleUrl
                 it[isLocked] = data.isLocked
+                it[access] = data.access.wire
                 it[mode] = data.mode.wire
                 it[name] = data.name
                 it[scheduledStart] = data.scheduledStart?.toEpochMilliseconds()
                 it[scheduledAction] = data.scheduledAction?.wire
+                it[customData] = CustomDataCodec.encode(data.customData)
             }
         }
     }
 
-    /** Deletes the display with the given [displayId] from the display table. */
     private fun delete(displayId: UUID) {
         transaction(db) { table.deleteWhere { id eq displayId.toBytes() } }
     }
 
-    /** Applies common properties from a row to a display data object, such as URL and playback mode. */
     private fun <T : DisplayData> T.applyCommon(row: ResultRow): T = apply {
         url = row[table.videoCode]
         val stored = PlaybackMode.fromWire(row[table.mode])
@@ -270,10 +304,12 @@ class StorageManager(
         else if (row[table.isSync]) PlaybackMode.SYNCED else PlaybackMode.LOCAL
         duration = row[table.duration]
         lang = row[table.lang]
-        subtitleUrl = row[table.subtitleUrl]
-        isLocked = row[table.isLocked]
+        // Rows predating the access column carry only the old boolean; map it onto a level.
+        access = row[table.access]?.let(DisplayAccess::fromWire)
+            ?: DisplayAccess.fromLegacyLocked(row[table.isLocked])
         name = row[table.name]
         scheduledStart = row[table.scheduledStart]?.let(Instant::fromEpochMilliseconds)
         scheduledAction = row[table.scheduledAction]?.let(PlaybackAction::fromWire)
+        customData.putAll(CustomDataCodec.decode(row[table.customData]))
     }
 }

@@ -27,6 +27,9 @@ on:
       required_native_platforms:
         value: ${{ jobs.metadata.outputs.required_native_platforms }}
 
+env:
+  BTBN_FFMPEG_TAG: autobuild-2026-08-31-13-27
+
 permissions:
   contents: read
 
@@ -64,24 +67,13 @@ jobs:
           python3 - <<'EOF'
           import json, os
 
-          versions = sorted(
-              p for p in os.listdir("versions")
-              if os.path.isfile(os.path.join("versions", p, "gradle.properties"))
-          )
+          with open("versions.json") as f:
+              versions_data = json.load(f)
+
+          versions = sorted(versions_data["versions"].keys())
 
           if not versions:
               raise SystemExit("No Stonecutter versions found")
-
-          def read_props(path):
-              props = {}
-              with open(path) as f:
-                  for line in f:
-                      line = line.strip()
-                      if not line or line.startswith("#") or "=" not in line:
-                          continue
-                      key, value = line.split("=", 1)
-                      props[key.strip()] = value.strip()
-              return props
 
           def version_key(v):
               return tuple(int(x) if x.isdigit() else 0 for x in v.split("."))
@@ -89,7 +81,7 @@ jobs:
           PAPER_MIN = (1, 21, 11)
           paper_build_candidates = sorted(
               v for v in versions
-              if read_props(os.path.join("versions", v, "gradle.properties")).get("java.version") == "21"
+              if versions_data["versions"][v].get("java.version") == "21"
               and version_key(v) >= PAPER_MIN
           )
           if not paper_build_candidates:
@@ -170,9 +162,9 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # Version channels and their "pretty" display names:
-          #   1.8.4-dev        -> Developer  (build artifacts only, never published)
-          #   1.9.0-preview.5  -> Preview 5  (public alpha pre-release)
-          #   1.8.4            -> Release    (stable, public release)
+          # 1.8.4-dev          -> Developer    (build artifacts only, never published)
+          # 1.9.0-preview.5    -> Preview 5    (public alpha pre-release)
+          # 1.8.4              -> Release      (stable, public release)
           if [[ "$VERSION" =~ ^([0-9]+(\.[0-9]+)*)-dev$ ]]; then
             echo "is_dev=true" >> $GITHUB_OUTPUT
             echo "is_preview=false" >> $GITHUB_OUTPUT
@@ -242,10 +234,10 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          brew install ffmpeg@7 pkg-config
-          ffmpeg_ver="$(brew list --versions ffmpeg@7 | awk '{print $2}')"
+          brew install ffmpeg pkg-config
+          ffmpeg_ver="$(brew list --versions ffmpeg | awk '{print $2}')"
           echo "FFMPEG_CACHE_SUFFIX=ffmpeg-${ffmpeg_ver}" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg)/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
 
       - name: Cache Cargo
@@ -285,7 +277,7 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${auth_args[@]}" \
             -o "$release_json" \
-            https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest
+            "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/${BTBN_FFMPEG_TAG}"
           url="$(
             FFMPEG_ARCH="$ffmpeg_arch" FFMPEG_EXT="tar.xz" "$python_bin" - "$release_json" <<'PY'
           import json, os, re, sys
@@ -293,7 +285,7 @@ jobs:
           path = sys.argv[1]
           arch = os.environ["FFMPEG_ARCH"]
           ext = os.environ["FFMPEG_EXT"]
-          pattern = re.compile(rf"^ffmpeg-n8\..*-{re.escape(arch)}-lgpl-shared-8\.1\.{re.escape(ext)}$")
+          pattern = re.compile(rf"^ffmpeg-n9\..*-{re.escape(arch)}-lgpl-shared-9\.0\.{re.escape(ext)}$")
           with open(path, encoding="utf-8") as f:
               release = json.load(f)
           url = next(
@@ -322,7 +314,7 @@ jobs:
           # Use a prebuilt LGPL shared FFmpeg instead of compiling it from
           # source via vcpkg (which took 10+ min per run). ffmpeg-sys-next picks
           # it up through FFMPEG_DIR and runs bindgen against its headers, so any
-          # 8.x build works. BtbN publishes matching win64 / winarm64 archives.
+          # 9.x build works. BtbN publishes matching win64 / winarm64 archives.
           case "${{ matrix.native.target }}" in
             x86_64-*) ffmpeg_arch=win64 ;;
             aarch64-*) ffmpeg_arch=winarm64 ;;
@@ -344,7 +336,7 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "${auth_args[@]}" \
             -o "$release_json" \
-            https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest
+            "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/${BTBN_FFMPEG_TAG}"
           url="$(
             FFMPEG_ARCH="$ffmpeg_arch" FFMPEG_EXT="zip" "$python_bin" - "$release_json" <<'PY'
           import json, os, re, sys
@@ -352,7 +344,7 @@ jobs:
           path = sys.argv[1]
           arch = os.environ["FFMPEG_ARCH"]
           ext = os.environ["FFMPEG_EXT"]
-          pattern = re.compile(rf"^ffmpeg-n8\..*-{re.escape(arch)}-lgpl-shared-8\.1\.{re.escape(ext)}$")
+          pattern = re.compile(rf"^ffmpeg-n9\..*-{re.escape(arch)}-lgpl-shared-9\.0\.{re.escape(ext)}$")
           with open(path, encoding="utf-8") as f:
               release = json.load(f)
           url = next(
@@ -466,7 +458,7 @@ jobs:
                 ;;
               macOS)
                 if command -v brew >/dev/null 2>&1; then
-                  brew info --json=v2 ffmpeg@7 > "$license_dir/ffmpeg-homebrew.json" 2>/dev/null || true
+                  brew info --json=v2 ffmpeg > "$license_dir/ffmpeg-homebrew.json" 2>/dev/null || true
                 fi
                 ;;
             esac
@@ -558,7 +550,17 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Select Stonecutter version
-        run: echo "${{ matrix.mc }}" > versions/active.txt
+        run: |
+          python3 - <<'EOF'
+          import json
+
+          with open("versions.json") as f:
+              data = json.load(f)
+          data["active"] = "${{ matrix.mc }}"
+          with open("versions.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          EOF
 
       - name: Download native archives
         uses: actions/download-artifact@v8.0.1
@@ -612,8 +614,6 @@ jobs:
           DREAMDISPLAYS_REQUIRED_NATIVE_PLATFORMS: ${{ needs.metadata.outputs.required_native_platforms }}
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Xmx4G
 
-      # The Paper jar is one cross-version artifact built only in the paper_build_version job
-      # (>=1.21.11); it dispatches 1.21.1 and 26.x at runtime, so it is not built per version.
       - name: Build Paper with Gradle
         if: matrix.mc == needs.metadata.outputs.paper_build_version
         run: |

@@ -1,9 +1,10 @@
 package com.dreamdisplays.platform.server
 
+import com.dreamdisplays.platform.server.api.PaperServerApi
 import com.dreamdisplays.platform.server.datatypes.display.PaperDisplayData
 import com.dreamdisplays.platform.server.managers.DisplayManager
 import com.dreamdisplays.platform.server.managers.StorageManager
-import com.dreamdisplays.platform.server.media.LocalMediaServer
+import com.dreamdisplays.platform.server.media.LocalVttServer
 import com.dreamdisplays.platform.server.meta.Scheduler
 import com.dreamdisplays.platform.server.meta.ServerCoroutines
 import com.dreamdisplays.platform.server.metrics.TelemetryMetrics
@@ -30,7 +31,6 @@ class PaperServer : JavaPlugin() {
     /** Storage manager for persistent data. */
     lateinit var storage: StorageManager
 
-    /** Captures the plugin instance, loads config, and registers `Brigadier` commands before any worlds load. */
     override fun onLoad() {
         instance = this
         Companion.config = Config(this)
@@ -39,20 +39,21 @@ class PaperServer : JavaPlugin() {
         }
     }
 
-    /** Standard `Bukkit` hook, delegates to [doEnable] so reload commands can reuse the logic. */
     override fun onEnable() {
         doEnable()
     }
 
-    /** Disables the plugin, disconnecting from the database and tearing down resources. */
     override fun onDisable() {
         doDisable()
     }
 
     /** Initializes scheduler, storage, listeners, channels, and metrics. Safe to call from a reload. */
     fun doEnable() {
+        ServerCoroutines.warmUp()
+        TelemetryMetrics.warmUp()
+
         Scheduler.init(this)
-        LocalMediaServer.start(this)
+        LocalVttServer.start(this)
 
         val s = Companion.config.storage
         val backend = StorageBackend.fromConfig(s.type)
@@ -80,28 +81,37 @@ class PaperServer : JavaPlugin() {
         runRepeatingTasks()
 
         TelemetryMetrics.register(this, Metrics(this, 26488))
+
+        PaperServerApi.start()
     }
 
-    /** Calls the Paper-only scheduler registrar without requiring its symbol in Fabric compilation. */
     private fun runRepeatingTasks() {
         val registrarClass = Class.forName("com.dreamdisplays.platform.server.registrar.SchedulerRegistrar")
         val registrar = registrarClass.getField("INSTANCE").get(null)
         registrarClass.getMethod("runRepeatingTasks", PaperServer::class.java).invoke(registrar, this)
     }
 
-    /** Persists state and tears down resources. Safe to call from a reload. */
+    /**
+     * Persists state and tears down resources. Safe to call from a reload.
+     *
+     * Each step is isolated.
+     */
     fun doDisable() {
-        LocalMediaServer.stop()
-        if (::storage.isInitialized) {
-            DisplayManager.save { data: PaperDisplayData -> storage.saveDisplay(data) }
-            ServerCoroutines.shutdown()
-            storage.disconnect()
-        }
+        if (!::storage.isInitialized) return
+        disableStep("stop local VTT origin") { LocalVttServer.stop() }
+        disableStep("stop addons") { PaperServerApi.stop() }
+        disableStep("save displays") { DisplayManager.save { data: PaperDisplayData -> storage.saveDisplay(data) } }
+        disableStep("stop background IO") { ServerCoroutines.shutdown() }
+        disableStep("close storage") { storage.disconnect() }
+    }
+
+    private fun disableStep(what: String, step: () -> Unit) {
+        runCatching(step).onFailure { Companion.logger.error("Failed to $what while disabling.", it) }
     }
 
     companion object {
         /** Logger. */
-        val logger = LoggerFactory.getLogger("DreamDisplays/Plugin")
+        val logger = LoggerFactory.getLogger(javaClass)
 
         /** Mod config (`Fabric` server included). */
         lateinit var config: Config
@@ -114,7 +124,6 @@ class PaperServer : JavaPlugin() {
             instance.server.pluginManager.disablePlugin(instance)
         }
 
-        /** The plugin instance. */
         private lateinit var instance: PaperServer
     }
 }

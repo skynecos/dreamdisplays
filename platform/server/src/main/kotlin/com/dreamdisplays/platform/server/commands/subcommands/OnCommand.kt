@@ -4,6 +4,8 @@ import com.dreamdisplays.platform.server.PaperServer
 import com.dreamdisplays.platform.server.VanillaServerState
 import com.dreamdisplays.platform.server.managers.PlayerManager
 import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.VanillaPermissions
 import com.dreamdisplays.platform.server.utils.net.PacketUtil
 import com.dreamdisplays.platform.server.utils.net.VanillaPacketUtil
@@ -21,29 +23,28 @@ import org.bukkit.entity.Player
  * Handles the `/display on` command. Enables display rendering for the sender or for another
  * player when the caller holds the `toggleOthers` permission.
  */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @PaperOnly
 class OnCommand : SubCommand {
     override val name = "on"
     override val permission: String? = null
     override val playerOnly = false
 
-    /** Enables displays for the sender or for another player when permitted. */
     override fun execute(sender: CommandSender, args: Array<String?>) {
         val target = resolveTarget(sender, args) ?: return
         val selfTarget = sender is Player && sender.uniqueId == target.uniqueId
 
         if (!selfTarget && !sender.hasPermission(PaperServer.config.permissions.toggleOthers)) {
-            MessageUtil.sendMessage(sender, "displayCommandMissingPermission")
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(sender)
             return
         }
 
         if (PlayerManager.isDisplaysEnabled(target)) {
-            MessageUtil.sendMessage(target, "display.already-enabled")
+            PacketUtil.sendDisplayEnabled(target, true)
+            ServerMessage.DISPLAY_ALREADY_ENABLED.sendTo(target)
             if (!selfTarget) {
                 MessageUtil.sendColoredMessage(
                     sender,
-                    MessageUtil.formatPrintf(sender, "display.already-enabled.target", target.name)
+                    MessageUtil.formatPrintf(sender, ServerMessage.DISPLAY_ALREADY_ENABLED_TARGET, target.name)
                 )
             }
             return
@@ -51,53 +52,48 @@ class OnCommand : SubCommand {
 
         PlayerManager.setDisplaysEnabled(target, true)
         PacketUtil.sendDisplayEnabled(target, true)
-        MessageUtil.sendMessage(target, "display.enabled")
+        ServerMessage.DISPLAY_ENABLED.sendTo(target)
         if (!selfTarget) {
             MessageUtil.sendColoredMessage(
                 sender,
-                MessageUtil.formatPrintf(sender, "display.enabled.target", target.name)
+                MessageUtil.formatPrintf(sender, ServerMessage.DISPLAY_ENABLED_TARGET, target.name)
             )
         }
     }
 
-    /** Suggests online player names when [sender] is allowed to toggle others. */
     override fun complete(sender: CommandSender, args: Array<String?>): List<String> {
-        if (args.size != 2) return emptyList()
-        if (!sender.hasPermission(PaperServer.config.permissions.toggleOthers)) return emptyList()
+        if (args.size != 2) return []
+        if (!sender.hasPermission(PaperServer.config.permissions.toggleOthers)) return []
         return Bukkit.getOnlinePlayers().map { it.name }.sorted()
     }
 
-    /** Resolves the target player from [args], defaults to [sender] when no name was given. */
     private fun resolveTarget(sender: CommandSender, args: Array<String?>): Player? {
         if (args.size == 1) {
             return sender as? Player ?: run {
-                MessageUtil.sendMessage(sender, "displayWrongCommand")
+                ServerMessage.DISPLAY_WRONG_COMMAND.sendTo(sender)
                 null
             }
         }
         if (args.size != 2) {
-            MessageUtil.sendMessage(sender, "displayWrongCommand")
+            ServerMessage.DISPLAY_WRONG_COMMAND.sendTo(sender)
             return null
         }
 
         val targetName = args[1]?.trim().orEmpty()
         if (targetName.isBlank()) {
-            MessageUtil.sendMessage(sender, "displayWrongCommand")
+            ServerMessage.DISPLAY_WRONG_COMMAND.sendTo(sender)
             return null
         }
 
         val target = Bukkit.getPlayerExact(targetName)
         if (target != null) return target
 
-        MessageUtil.sendColoredMessage(sender, MessageUtil.formatPrintf(sender, "displayTargetNotFound", targetName))
+        MessageUtil.sendColoredMessage(sender, MessageUtil.formatPrintf(sender, ServerMessage.DISPLAY_TARGET_NOT_FOUND, targetName))
         return null
     }
 }
 
-/**
- * Shared `Fabric` / `NeoForge` implementation of the `/display on` command.
- */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
+/** Shared `Fabric` / `NeoForge` implementation of the `/display on` command. */
 @ModLoaderOnly
 object VanillaOnCommand {
     /** Enables displays for the executing player or the named [targetName], checking op-level permission for the latter. */
@@ -128,13 +124,14 @@ object VanillaOnCommand {
                 VanillaPermissions.Fallback.OP
             ))
         ) {
-            if (self != null) MessageUtil.sendMessage(self, "displayCommandMissingPermission")
+            if (self != null) ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(self)
             else ctx.source.sendFailure(Component.literal("Missing permission."))
             return 0
         }
 
         if (PlayerManager.isDisplaysEnabled(target)) {
-            MessageUtil.sendMessage(target, "display.already-enabled")
+            VanillaPacketUtil.sendDisplayEnabled(target, true)
+            ServerMessage.DISPLAY_ALREADY_ENABLED.sendTo(target)
             if (!selfTarget) {
                 val msg = config.getMessageForPlayer(self, "display.already-enabled.target") as? String
                 if (msg != null) MessageUtil.sendColoredMessage(self, String.format(msg, target.name.string))
@@ -144,7 +141,7 @@ object VanillaOnCommand {
 
         PlayerManager.setDisplaysEnabled(target, true)
         VanillaPacketUtil.sendDisplayEnabled(target, true)
-        MessageUtil.sendMessage(target, "display.enabled")
+        ServerMessage.DISPLAY_ENABLED.sendTo(target)
         if (!selfTarget) {
             val msg = config.getMessageForPlayer(self, "display.enabled.target") as? String
             if (msg != null) MessageUtil.sendColoredMessage(self, String.format(msg, target.name.string))

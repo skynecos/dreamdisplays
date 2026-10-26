@@ -1,6 +1,6 @@
 package com.dreamdisplays.core.protocol.common
 
-import com.dreamdisplays.api.protocol.model.PacketDirection
+import com.dreamdisplays.shared.protocol.PacketDirection
 import com.dreamdisplays.core.protocol.common.packets.ClearCache
 import com.dreamdisplays.core.protocol.common.packets.ClientHello
 import com.dreamdisplays.core.protocol.common.packets.DreamPacket
@@ -63,7 +63,5 @@ enum class PacketType(
         init {
             require(byId.size == entries.size) { "Duplicate protocol packet type ids." }
         }
-
-        fun fromId(id: Int): PacketType? = byId[id]
     }
 }

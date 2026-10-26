@@ -1,11 +1,11 @@
 package com.dreamdisplays.platform.server.utils.net
 
-import com.dreamdisplays.api.capability.ServerFeature
-import com.dreamdisplays.api.playback.model.FullscreenAckAction
+import com.dreamdisplays.shared.capability.ServerFeature
+import com.dreamdisplays.shared.playback.FullscreenAckAction
 import com.dreamdisplays.api.playback.model.PlaybackAction
 import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.api.playback.model.WatchPartyAction
-import com.dreamdisplays.api.protocol.model.PacketDirection
+import com.dreamdisplays.shared.protocol.PacketDirection
 import com.dreamdisplays.core.protocol.common.PacketRegistry
 import com.dreamdisplays.core.protocol.common.packets.*
 import com.dreamdisplays.platform.client.net.V2Payload
@@ -23,11 +23,11 @@ import org.slf4j.LoggerFactory
 
 /**
  * Protocol-v2 networking for the `Fabric` flavor: one envelope payload in both directions.
- * Business logic is shared with the frozen-v1 receivers through [VanillaDisplayActions].
+ * Business logic is shared with the other receivers through [VanillaDisplayActions].
  */
 @FabricOnly
 object FabricV2Networking {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/FabricV2Networking")
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /** Encodes [packet] once and sends it to every player in [players]. */
     fun send(players: List<ServerPlayer>, packet: DreamPacket) {
@@ -55,7 +55,6 @@ object FabricV2Networking {
         }
     }
 
-    /** Routes a decoded serverbound packet to the shared action handlers. */
     private fun dispatch(player: ServerPlayer, server: MinecraftServer, packet: DreamPacket) {
         when (packet) {
             is ClientHello -> handleHello(player, server, packet)
@@ -64,7 +63,7 @@ object FabricV2Networking {
             is DisplayDelete -> VanillaDisplayActions.delete(player, server, packet.id)
             is ReportDisplay -> DisplayManager.report(packet.id, player, server)
             is SetVideo -> VanillaDisplayActions.setVideo(player, server, packet.id, packet.url, packet.lang)
-            is SetLocked -> VanillaDisplayActions.setLocked(player, server, packet.id, packet.locked)
+            is SetLocked -> VanillaDisplayActions.setAccess(player, server, packet.id, packet.accessLevel())
             is SetMode -> VanillaDisplayActions.setMode(
                 player,
                 server,
@@ -97,15 +96,11 @@ object FabricV2Networking {
         }
     }
 
-    /**
-     * Marks [player] as a v2 peer, replies with the [ServerHello] and the display batch. Fullscreen re-delivery also
-     * runs here for reconnecting viewers.
-     */
     private fun handleHello(player: ServerPlayer, server: MinecraftServer, hello: ClientHello) {
         if (V2PlayerTracker.isV2(player.uuid)) return
         V2PlayerTracker.markV2(player.uuid, hello)
         send(
-            listOf(player),
+            [player],
             ServerHello(
                 isPremium = VanillaDisplayActions.isPremium(player),
                 isAdmin = VanillaDisplayActions.isAdmin(player),

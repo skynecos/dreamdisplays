@@ -24,38 +24,38 @@ import net.minecraft.client.renderer.rendertype.RenderType
 import net.minecraft.resources.Identifier
 //?} else
 /*import net.minecraft.resources.ResourceLocation as Identifier*/
-import com.dreamdisplays.api.platform.service.keys.PlatformServices
+import com.dreamdisplays.core.services.keys.PlatformServices
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayRegistry
-import com.dreamdisplays.platform.client.net.Packets
+import com.dreamdisplays.platform.client.net.LegacyProbe
 import com.dreamdisplays.platform.client.net.V2Payload
 import com.dreamdisplays.platform.client.platform.FabricPlatformIntegrationProvider
+//? if >=26.2 {
+import com.dreamdisplays.platform.client.render.subtitleTextSubmitter
+import net.minecraft.client.renderer.SubmitNodeCollector
+//?}
 import com.dreamdisplays.platform.client.render.ScreenRenderer
 import com.dreamdisplays.platform.client.render.UnshadedDisplayPass
-import com.dreamdisplays.platform.client.render.WorldTextSubmitter
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
 import net.fabricmc.api.ClientModInitializer
+import com.dreamdisplays.platform.client.input.DisplayMenuInputHandler
+import net.fabricmc.fabric.api.event.player.UseBlockCallback
+import net.minecraft.world.InteractionResult
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
-//? if >=26.2 {
-import net.minecraft.client.renderer.SubmitNodeCollector
-import net.minecraft.network.chat.Style
-import net.minecraft.util.FormattedCharSequence
-//?}
+import net.minecraft.core.BlockPos
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import org.slf4j.LoggerFactory
 import java.lang.reflect.Proxy
 
 class Client : ClientModInitializer, Mod {
-    /** If the `LevelRenderContext` has a `BufferSource` API, this is set to true. */
     private var customGeometryUnavailable = false
 
-    /** Called on client initialization. */
     override fun onInitializeClient() {
         // The Platform must be in the registry before onModInit so ClientStartupManager
         // can host the ClientApplication on top of it during bootstrap.
@@ -70,15 +70,9 @@ class Client : ClientModInitializer, Mod {
             Initializer.onV2Packet(payload.bytes)
         }
 
-        // Frozen v1 receivers for pre-v2 servers; payloads are lifted into v2 packets
-        listOf(
-            Packets.Info.PACKET_ID, Packets.Premium.PACKET_ID, Packets.IsAdmin.PACKET_ID,
-            Packets.Delete.PACKET_ID, Packets.DisplayEnabled.PACKET_ID, Packets.Sync.PACKET_ID,
-            Packets.ReportEnabled.PACKET_ID, Packets.ClearCache.PACKET_ID,
-        ).forEach { type ->
-            ClientPlayNetworking.registerGlobalReceiver(type) { payload, _ ->
-                Initializer.onLegacyPacket(payload)
-            }
+        // Protocol v1 is unsupported; a v1 reply only tells us the server is outdated
+        ClientPlayNetworking.registerGlobalReceiver(LegacyProbe.Premium.PACKET_ID) { _, _ ->
+            Initializer.onLegacyServerDetected()
         }
 
         //? if >=26 {
@@ -117,6 +111,18 @@ class Client : ClientModInitializer, Mod {
             }
         }*/
 
+        //? if >=26 {
+        LevelRenderEvents.BEFORE_BLOCK_OUTLINE.register { _, state -> !isDisplayBlock(state.pos()) }
+        //?} else
+        /*
+        //? if ==1.21.11 {
+        WorldRenderEvents.BEFORE_BLOCK_OUTLINE.register { _, state -> !isDisplayBlock(state.pos()) }
+        //?}
+        //? if <1.21.11 {
+        WorldRenderEvents.BLOCK_OUTLINE.register { _, context -> !isDisplayBlock(context.blockPos()) }
+        //?}
+        */
+
         //? if >=1.21.11 {
         HudElementRegistry.addLast(
             Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "pip_overlay")
@@ -136,6 +142,12 @@ class Client : ClientModInitializer, Mod {
 
         ClientTickEvents.END_CLIENT_TICK.register { Initializer.onEndTick(it) }
 
+        UseBlockCallback.EVENT.register { _, world, _, _ ->
+            if (!world.isClientSide) InteractionResult.PASS
+            else if (DisplayMenuInputHandler.tryOpenFromWorld()) InteractionResult.FAIL
+            else InteractionResult.PASS
+        }
+
         ClientPlayConnectionEvents.JOIN.register { _, _, client ->
             if (client.level != null && client.player != null) {
                 val serverId = if (client.isLocalServer) "singleplayer"
@@ -151,27 +163,22 @@ class Client : ClientModInitializer, Mod {
         ClientLifecycleEvents.CLIENT_STOPPING.register { Initializer.onStop() }
     }
 
-    /** Packet sender. */
     override fun sendPacket(packet: CustomPacketPayload) {
         ClientPlayNetworking.send(packet)
     }
 
+    private fun isDisplayBlock(pos: BlockPos): Boolean =
+        DisplayRegistry.getScreens().any { it.isInScreen(pos) }
+
     //? if >=26 {
-    /** Cached `SubmitNodeCollector$CustomGeometryRenderer` interface, resolved once. */
     private val customGeometryRendererClass: Class<*> by lazy {
         Class.forName("net.minecraft.client.renderer.SubmitNodeCollector\$CustomGeometryRenderer")
     }
 
-    /** Cached `LevelRenderContext.submitNodeCollector` accessor (the context's runtime class is stable). */
     private var submitNodeCollectorMethod: java.lang.reflect.Method? = null
-
-    /** Cached `SubmitNodeCollector.submitCustomGeometry(PoseStack, RenderType, CustomGeometryRenderer)`. */
     private var submitCustomGeometryMethod: java.lang.reflect.Method? = null
-
-    /** Whether the `LevelRenderContext` runtime class exposes `bufferSource` (probed once). */
     private var hasBufferSourceCache: Boolean? = null
 
-    /** Renders the screen using the `submitNodeCollector` API. */
     private fun renderSubmittedScreens(context: LevelRenderContext, mc: Minecraft) {
         val camera = mainCamera(mc)
         if (hasBufferSource(context)) {
@@ -193,11 +200,9 @@ class Client : ClientModInitializer, Mod {
         }
 
         runCatching {
-            ScreenRenderer.render(
-                context.poseStack(),
-                camera,
+            ScreenRenderer.render(context.poseStack(), camera,
                 //? if >=26.2 {
-                submitText = worldTextSubmitter(submitNodeCollector),
+                submitText = subtitleTextSubmitter(submitNodeCollector as SubmitNodeCollector),
                 //?}
             ) { type, appendVertices ->
                 submitCustomGeometry(context.poseStack(), submitNodeCollector, type, appendVertices)
@@ -209,7 +214,6 @@ class Client : ClientModInitializer, Mod {
         }
     }
 
-    /** Renders the screen using the `BufferSource` API. */
     private fun renderBufferedScreens(context: LevelRenderContext, mc: Minecraft) {
         if (!hasBufferSource(context)) {
             return
@@ -219,20 +223,26 @@ class Client : ClientModInitializer, Mod {
         renderWithBufferSource(context, camera)
     }
 
-    /** If the `LevelRenderContext` has a `BufferSource` API, returns true. */
     private fun hasBufferSource(context: LevelRenderContext): Boolean =
         hasBufferSourceCache
             ?: runCatching { context.javaClass.getMethod("bufferSource") }.isSuccess.also { hasBufferSourceCache = it }
 
-    /** Renders the screen using the `BufferSource` API. */
+    private var bufferSourceMethod: java.lang.reflect.Method? = null
+    private var getBufferMethod: java.lang.reflect.Method? = null
+    private var endBatchMethod: java.lang.reflect.Method? = null
+
     private fun renderWithBufferSource(context: LevelRenderContext, camera: Camera) {
         val bufferSource = runCatching {
-            context.javaClass.getMethod("bufferSource").invoke(context)
+            val method = bufferSourceMethod?.takeIf { it.declaringClass.isAssignableFrom(context.javaClass) }
+                ?: context.javaClass.getMethod("bufferSource").also { bufferSourceMethod = it }
+            method.invoke(context)
         }.getOrNull() ?: return
-        val getBuffer = runCatching { bufferSource.javaClass.getMethod("getBuffer", RenderType::class.java) }
-            .getOrNull() ?: return
-        val endBatch = runCatching { bufferSource.javaClass.getMethod("endBatch") }
-            .getOrNull() ?: return
+        val getBuffer = getBufferMethod?.takeIf { it.declaringClass.isAssignableFrom(bufferSource.javaClass) }
+            ?: runCatching { bufferSource.javaClass.getMethod("getBuffer", RenderType::class.java) }
+                .getOrNull()?.also { getBufferMethod = it } ?: return
+        val endBatch = endBatchMethod?.takeIf { it.declaringClass.isAssignableFrom(bufferSource.javaClass) }
+            ?: runCatching { bufferSource.javaClass.getMethod("endBatch") }
+                .getOrNull()?.also { endBatchMethod = it } ?: return
 
         ScreenRenderer.render(context.poseStack(), camera) { type, appendVertices ->
             appendVertices(context.poseStack().last(), getBuffer.invoke(bufferSource, type) as VertexConsumer)
@@ -240,11 +250,6 @@ class Client : ClientModInitializer, Mod {
         endBatch.invoke(bufferSource)
     }
 
-    /**
-     * Submits custom geometry to the GPU. The renderer proxy is per-quad by design: the collector
-     * renders deferred, so each submission must capture its own [appendVertices] (the generated
-     * proxy class itself is cached by the JDK, so per-call instantiation is just an allocation).
-     */
     private fun submitCustomGeometry(
         stack: PoseStack,
         submitNodeCollector: Any,
@@ -265,28 +270,8 @@ class Client : ClientModInitializer, Mod {
                 .also { submitCustomGeometryMethod = it }
         method.invoke(submitNodeCollector, stack, type, renderer)
     }
-
-    //? if >=26.2 {
-    /** Submits subtitle glyphs to the same deferred level collector as the display geometry. */
-    private fun worldTextSubmitter(submitNodeCollector: Any) = WorldTextSubmitter {
-            stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
-        (submitNodeCollector as SubmitNodeCollector).submitText(
-            stack,
-            x,
-            y,
-            FormattedCharSequence.forward(text, Style.EMPTY),
-            shadow,
-            mode,
-            packedLight,
-            color,
-            backgroundColor,
-            0,
-        )
-    }
-    //?}
     //?}
 
-    /** Main camera accessor. */
     private fun mainCamera(mc: Minecraft): Camera {
         //? if >=26.2 {
         return mc.gameRenderer.mainCamera()
@@ -294,14 +279,12 @@ class Client : ClientModInitializer, Mod {
         /*return mc.gameRenderer.getMainCamera()*/
     }
 
-    /** World pose stack accessor. */
     private fun worldPoseStack(context: Any): PoseStack =
         runCatching { context.javaClass.getMethod("matrixStack") }
             .getOrElse { context.javaClass.getMethod("matrices") }
             .invoke(context) as PoseStack
 
     private companion object {
-        /** Logger. */
-        private val logger = LoggerFactory.getLogger("DreamDisplays/FabricClient")
+        private val logger = LoggerFactory.getLogger(javaClass)
     }
 }

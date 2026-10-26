@@ -36,13 +36,16 @@ interface ClientSettingsStorage {
     /** Sets the client-side URL and language override for [displayUuid] and saves. */
     fun setUrlOverride(displayUuid: UUID, url: String?, lang: String?)
 
+    /** Sets the viewer-picked audio track language for [displayUuid] and saves. */
+    fun setAudioTrackLang(displayUuid: UUID, lang: String?)
+
+    /** Sets the viewer's subtitle track language for [displayUuid] (null disables subtitles) and saves. */
+    fun setSubtitleTrackLang(displayUuid: UUID, lang: String?)
+
     /** Sets the last known playback position for [displayUuid] and saves. */
     fun setSavedTimeNanos(displayUuid: UUID, nanos: Long)
 
-    /** Sets the viewer-chosen render distance (in blocks) for [displayUuid] and saves. */
-    fun setRenderDistance(displayUuid: UUID, blocks: Int)
-
-    /** Sets whether [displayUuid] is pinned to a Picture-in-Picture overlay and saves. */
+    /** Sets whether [displayUuid] is pinned to a `Picture-in-Picture` overlay and saves. */
     fun setPipOpen(displayUuid: UUID, open: Boolean)
 
     /** Sets whether the 3D acoustics engine applies to [displayUuid] and saves. */

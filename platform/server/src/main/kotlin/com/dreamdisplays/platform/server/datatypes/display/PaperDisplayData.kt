@@ -15,39 +15,73 @@ import java.util.*
 @PaperOnly
 @NullMarked
 class PaperDisplayData(
-    /** Unique identifier for the display. */
     override val id: UUID,
 
-    /** Unique identifier for the owner of the display. */
     override val ownerId: UUID,
 
     /** One corner of the display area. */
-    val pos1: Location,
+    pos1: Location,
 
     /** Opposite corner of the display area. */
-    val pos2: Location,
+    pos2: Location,
 
     /** Width of the display in blocks. */
-    override val width: Int,
+    width: Int,
 
     /** Height of the display in blocks. */
-    override val height: Int,
+    height: Int,
 
     /** Direction the display is facing. Default is `NORTH`. */
-    val facing: BlockFace = BlockFace.NORTH,
+    facing: BlockFace = BlockFace.NORTH,
 
-    /** Content rotation; only meaningful for floor / ceiling (`UP` / `DOWN`) facings. */
     override val rotation: DisplayRotation = DisplayRotation.NONE,
 
     /** True for the synthetic display backing a URL-only fullscreen broadcast. */
     virtual: Boolean = false,
+
+    override val conforming: Boolean = false,
 ) : BaseDisplayData(virtual) {
-    /** Bounding box of the display area. */
-    private val region = RegionUtil.calculateRegion(pos1, pos2)
+    /** One corner of the display area. */
+    var pos1: Location = pos1; private set
+
+    /** Opposite corner of the display area. */
+    var pos2: Location = pos2; private set
+
+    override var width: Int = width; private set
+
+    override var height: Int = height; private set
+
+    /** Direction the display is facing. */
+    var facing: BlockFace = facing
+        private set
+
+    private var region = RegionUtil.calculateRegion(pos1, pos2)
+
+    override val depth: Int
+        get() = when (facing) {
+            BlockFace.NORTH, BlockFace.SOUTH -> (box.maxZ - box.minZ).toInt()
+            BlockFace.EAST, BlockFace.WEST -> (box.maxX - box.minX).toInt()
+            else -> (box.maxY - box.minY).toInt()
+        }.coerceAtLeast(1)
 
     /** Bounding box of the display area, calculated from the two corner positions. */
-    val box: BoundingBox = BoundingBox(
-        region.minX.toDouble(), region.minY.toDouble(), region.minZ.toDouble(),
-        (region.maxX + 1).toDouble(), (region.maxY + 1).toDouble(), (region.maxZ + 1).toDouble(),
-    )
+    var box: BoundingBox = boxOf(region); private set
+
+    /** Moves and resizes the display to the area between [pos1] and [pos2] facing [facing]. */
+    fun relocate(pos1: Location, pos2: Location, facing: BlockFace, width: Int, height: Int) {
+        this.pos1 = pos1
+        this.pos2 = pos2
+        this.facing = facing
+        this.width = width
+        this.height = height
+        region = RegionUtil.calculateRegion(pos1, pos2)
+        box = boxOf(region)
+    }
+
+    private companion object {
+        fun boxOf(region: RegionUtil.RegionData) = BoundingBox(
+            region.minX.toDouble(), region.minY.toDouble(), region.minZ.toDouble(),
+            (region.maxX + 1).toDouble(), (region.maxY + 1).toDouble(), (region.maxZ + 1).toDouble(),
+        )
+    }
 }

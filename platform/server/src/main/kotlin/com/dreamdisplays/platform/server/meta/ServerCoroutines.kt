@@ -8,10 +8,19 @@ import kotlinx.coroutines.*
  */
 object ServerCoroutines {
     /** The server-side coroutine scope for all background IO. */
-    val io: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("DD-Server-IO"))
+    val io: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName("Server-IO"))
 
     /** Cancels all background server IO coroutines. Called on server stop / plugin disable. */
     fun shutdown() {
         io.cancel()
+    }
+
+    /**
+     * Runs everything [shutdown] will, on a throwaway scope, so the coroutine classes it needs — the
+     * scope's own, and the cancellation machinery, which nothing else here ever touches — are loaded
+     * while the plugin classloader is fresh.
+     */
+    fun warmUp() {
+        CoroutineScope(SupervisorJob()).cancel()
     }
 }

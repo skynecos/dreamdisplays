@@ -2,7 +2,7 @@
 
 package com.dreamdisplays.core.protocol.common
 
-import com.dreamdisplays.api.protocol.model.PacketDirection
+import com.dreamdisplays.shared.protocol.PacketDirection
 import com.dreamdisplays.core.protocol.common.packets.ClearCache
 import com.dreamdisplays.core.protocol.common.packets.DreamPacket
 import com.dreamdisplays.core.protocol.common.packets.ClientHello
@@ -59,11 +59,10 @@ object PacketRegistry {
         val id: Int get() = packetType.id
         val direction: PacketDirection get() = packetType.direction
 
-        /** Encodes [packet], which [entryOf] guarantees is an instance of [type]. */
         fun encode(proto: ProtoBuf, packet: DreamPacket): ByteArray = proto.encodeToByteArray(serializer, type.cast(packet))
     }
 
-    private val entries: List<Entry<out DreamPacket>> = listOf(
+    private val entries: List<Entry<out DreamPacket>> = [
         Entry(PacketType.CLIENT_HELLO, ClientHello::class, ClientHello.serializer()),
         Entry(PacketType.SERVER_HELLO, ServerHello::class, ServerHello.serializer()),
         Entry(PacketType.DISPLAY_INFO, DisplayInfo::class, DisplayInfo.serializer()),
@@ -86,7 +85,7 @@ object PacketRegistry {
         Entry(PacketType.PIP_PIN, PipPin::class, PipPin.serializer()),
         Entry(PacketType.REPORT_DURATION, ReportDuration::class, ReportDuration.serializer()),
         Entry(PacketType.REMOTE_PLAYBACK_TOGGLE, RemotePlaybackToggle::class, RemotePlaybackToggle.serializer()),
-    )
+    ]
 
     private val byId = entries.associateBy { it.id }
     private val byType = entries.associateBy { it.type }
@@ -105,21 +104,18 @@ object PacketRegistry {
         }
     }
 
-    /** Encodes [packet] into envelope bytes ready for the `dreamdisplays:v2` channel. */
     fun encode(packet: DreamPacket): ByteArray {
         val entry = entryOf(packet)
         val payload = entry.encode(proto, packet)
         return proto.encodeToByteArray(Envelope.serializer(), Envelope(entry.id, payload))
     }
 
-    /** Decodes envelope bytes; returns null for unknown type ids (newer peer, skip silently). */
     fun decode(bytes: ByteArray): DreamPacket? {
         val envelope = proto.decodeFromByteArray(Envelope.serializer(), bytes)
         val entry = byId[envelope.type] ?: return null
         return proto.decodeFromByteArray(entry.serializer, envelope.payload)
     }
 
-    /** Decodes envelope bytes, validating packet direction matches [inbound]; rejects packets from invalid directions. */
     fun decode(bytes: ByteArray, inbound: PacketDirection): DreamPacket? {
         val packet = decode(bytes) ?: return null
         val direction = directionOf(packet)
@@ -129,10 +125,8 @@ object PacketRegistry {
         return packet
     }
 
-    /** The registered travel direction of [packet]'s type. */
     fun directionOf(packet: DreamPacket): PacketDirection = entryOf(packet).direction
 
-    /** Descriptors of every registered packet, in id order; feeds the .proto schema generator. */
     val schemaDescriptors: List<SerialDescriptor>
         get() = entries.map { it.serializer.descriptor }
 

@@ -7,7 +7,6 @@ import com.dreamdisplays.api.display.model.property.DisplayFacing
 import com.dreamdisplays.api.display.model.property.DisplayId
 import com.dreamdisplays.api.display.model.property.DisplayState
 import com.dreamdisplays.api.display.model.settings.DisplaySettings
-import com.dreamdisplays.api.display.service.DisplayExecutor
 import java.util.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,7 +26,7 @@ class DefaultDisplaySystemTest {
         system.recordDisplay(display)
 
         assertEquals(display, system.getDisplay(id))
-        assertEquals(listOf(display), system.listDisplays())
+        assertEquals([display], system.listDisplays())
         assertIs<DisplayEvent.Created>(events.single())
     }
 
@@ -51,11 +50,11 @@ class DefaultDisplaySystemTest {
         )
 
         assertEquals(
-            listOf(
+            [
                 DisplayEvent.SettingsChanged::class,
                 DisplayEvent.StateChanged::class,
                 DisplayEvent.UrlChanged::class,
-            ),
+            ],
             events.map { it::class },
         )
     }
@@ -65,7 +64,7 @@ class DefaultDisplaySystemTest {
         val updated = display(settings = DisplaySettings(volume = 0.25f))
         val system = DefaultDisplaySystem(
             object : DisplayExecutor {
-                override fun setVolume(displayId: DisplayId, volume: Float): Display =
+                override fun setVolume(displayId: DisplayId, volume: Float): DisplayInfo =
                     updated.copy(settings = updated.settings.copy(volume = volume))
             },
         )
@@ -93,7 +92,7 @@ class DefaultDisplaySystemTest {
         settings: DisplaySettings = DisplaySettings.DEFAULT,
         url: String? = null,
         state: DisplayState = DisplayState.Idle,
-    ): Display = Display(
+    ): DisplayInfo = DisplayInfo(
         id = id,
         bounds = DisplayBounds(1.0, 2.0, 3.0, 4, 5, DisplayFacing.NORTH),
         settings = settings,

@@ -10,12 +10,7 @@ import java.util.concurrent.atomic.AtomicReference
 object ProxyNetwork {
     private val ownName = AtomicReference<String?>(null)
     private val names = AtomicReference<Set<String>>(emptySet())
-
-    /** Last `NetworkSessionList` the proxy sent, for `/display fullscreen list` to merge in. */
-    private val lastSessions = AtomicReference<List<NetworkSessionInfo>>(emptyList())
-
-    /** This backend's own name, as assigned by the proxy — null until a [ProxyWelcome] arrives. */
-    fun ownServerName(): String? = ownName.get()
+    private val lastSessions = AtomicReference<List<NetworkSessionInfo>>([])
 
     /** Every backend name currently known to the proxy, refreshed on each `ProxyWelcome`. */
     fun serverNames(): Set<String> = names.get()

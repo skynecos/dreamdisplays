@@ -6,7 +6,7 @@ import com.dreamdisplays.api.playback.model.PlaybackAction
 import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.api.playback.model.WatchPartyAction
 import com.dreamdisplays.api.playback.model.WatchPartySessionState
-import com.dreamdisplays.api.protocol.model.PacketDirection
+import com.dreamdisplays.shared.protocol.PacketDirection
 import com.dreamdisplays.core.protocol.common.packets.*
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -29,7 +29,7 @@ class RoundTripTest {
             modVersion = "1.8.0",
             supportsPopout = true,
             maxTextureSize = 8192,
-            supportedCodecs = listOf("h264", "vp9", "av1"),
+            supportedCodecs = ["h264", "vp9", "av1"],
             supportsAudio = false,
             systemRamMb = 16 * 1024,
             maxJvmMemoryMb = 4 * 1024,
@@ -45,8 +45,14 @@ class RoundTripTest {
             isAdmin = true,
             isReportingEnabled = true,
             maxDisplays = 25,
-            allowedFeatures = listOf("popout", "pip"),
+            allowedFeatures = ["popout", "pip"],
+            defaultVolume = 0.25f,
         )
+    )
+
+    @Test
+    fun serverHelloZeroDefaultVolume() = roundTrip(
+        ServerHello(defaultVolume = 0f),
     )
 
     @Test
@@ -63,7 +69,6 @@ class RoundTripTest {
             isLocked = false,
             mode = PlaybackMode.BROADCAST.wire,
             qualityCap = 360,
-            subtitleUrl = "https://cdn.example.com/altyazi/tr.vtt?bölüm=1",
         )
     )
 
@@ -89,8 +94,8 @@ class RoundTripTest {
         roundTrip(SetLocked(id, locked = false))
         roundTrip(ReportDisplay(id))
         roundTrip(SetDisplaysEnabled(enabled = false))
-        roundTrip(ClearCache(listOf(id, owner)))
-        roundTrip(ClearCache(emptyList()))
+        roundTrip(ClearCache([id, owner]))
+        roundTrip(ClearCache([]))
     }
 
     @Test

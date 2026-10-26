@@ -2,15 +2,13 @@ package com.dreamdisplays.platform.client.render
 
 import com.dreamdisplays.media.player.nativebridge.NativeMedia
 import com.dreamdisplays.platform.client.Initializer
-//? if >=1.21.11 {
+//? if >=1.21.11 <26.3 {
 import com.mojang.blaze3d.pipeline.RenderPipeline
-//?}
-import com.mojang.blaze3d.platform.NativeImage
-//? if >=1.21.11 {
 import com.mojang.blaze3d.textures.AddressMode
 import com.mojang.blaze3d.textures.FilterMode
 import com.mojang.blaze3d.textures.GpuSampler
 //?}
+import com.mojang.blaze3d.platform.NativeImage
 import net.minecraft.client.Minecraft
 //? if >=1.21.11 {
 import net.minecraft.client.renderer.rendertype.RenderSetup
@@ -30,7 +28,6 @@ import net.minecraft.resources.Identifier
  */
 object DisplayYuvRenderTypes {
     //? if >=1.21.11 {
-    /** Shared linear / clamp sampler used by all video planes. */
     private var sharedPlaneSampler: GpuSampler? = null
 
     /**
@@ -46,7 +43,6 @@ object DisplayYuvRenderTypes {
             1, java.util.OptionalDouble.empty(),
         ).also { sharedPlaneSampler = it }
 
-    /** Sampler names bound to the Y / U / V planes. */
     private const val SAMPLER_Y = "Sampler0"
     private const val SAMPLER_U = "Sampler1"
     private const val SAMPLER_V = "Sampler3"
@@ -57,7 +53,7 @@ object DisplayYuvRenderTypes {
      */
     val isSupported: Boolean by lazy {
         runCatching {
-            RenderPipeline.Builder::class.java.getMethod("withSampler", String::class.java)
+            RenderPipelineBuilder::class.java.getMethod("withSampler", String::class.java)
             Class.forName("com.mojang.blaze3d.textures.TextureFormat")
             true
         }.getOrDefault(false)
@@ -83,28 +79,36 @@ object DisplayYuvRenderTypes {
         if (isSupported) VideoPlaneTexture(label, width, height)
         else Yuv262Reflect.createPlaneTexture(label, width, height)
 
-    /** Compiled lazily by the backend on first draw; shared by every YUV display. */
     private val pipeline: RenderPipeline by lazy {
         if (!isSupported) return@lazy Yuv262Reflect.createPipeline()
         RenderPipelineCompat.createDisplayPipeline(
             Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "pipeline/display_yuv"),
-            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_fog"),
-            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_yuv"),
-            listOf(SAMPLER_Y, SAMPLER_U, SAMPLER_V),
+            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_fog" +
+                //? if >=26.3 {
+                "_rp"
+                //?} else
+                /*""*/),
+            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_yuv" +
+                //? if >=26.3 {
+                "_rp"
+                //?} else
+                /*""*/),
+            [SAMPLER_Y, SAMPLER_U, SAMPLER_V],
         )
     }
 
     /** Creates the [RenderType] drawing a display through the YUV pipeline from its three plane textures. */
-    fun create(yId: Identifier, uId: Identifier, vId: Identifier): RenderType = RenderType.create(
-        "dream-displays-yuv",
-        RenderSetup.builder(pipeline)
-            .withTexture(SAMPLER_Y, yId) { planeSampler() }
-            .withTexture(SAMPLER_U, uId) { planeSampler() }
-            .withTexture(SAMPLER_V, vId) { planeSampler() }
-            .createRenderSetup(),
+    fun create(yId: Identifier, uId: Identifier, vId: Identifier): RenderType = DisplaySolidPhase.mark(
+        RenderType.create(
+            "dream-displays-yuv",
+            RenderSetup.builder(pipeline)
+                .withTexture(SAMPLER_Y, yId) { planeSampler() }
+                .withTexture(SAMPLER_U, uId) { planeSampler() }
+                .withTexture(SAMPLER_V, vId) { planeSampler() }
+                .createRenderSetup(),
+        )
     )
 
-    /** Shared 1x1 white texture used for the loading / error quads in YUV mode. */
     private var whiteTextureId: Identifier? = null
 
     /**
@@ -126,7 +130,6 @@ object DisplayYuvRenderTypes {
         return DisplayUnlitRenderTypes.create("dream-displays-fallback", id)
     }
 
-    /** Shared flat solid-color render type (a 1 x 1 white texture modulated by the vertex color). */
     @Volatile
     private var sharedSolidType: RenderType? = null
 

@@ -4,8 +4,7 @@ import com.dreamdisplays.api.Unstable
 import kotlinx.serialization.Serializable
 
 /**
- * How a display drives its playback timeline. This protocol-v2 enum travels on the wire as its
- * [ordinal] int ([wire] / [fromWire]); ordinals are append-only - never reorder or remove an entry.
+ * How a display drives its playback timeline.
  *
  * @since 1.8.x
  */
@@ -36,10 +35,43 @@ enum class PlaybackMode {
         fun fromWire(wire: Int): PlaybackMode = byWire[wire] ?: LOCAL
 
         /** Persistable base modes a display can hold; excludes the ephemeral [WATCH_PARTY]. */
-        val baseModes: List<PlaybackMode> = listOf(LOCAL, SYNCED, BROADCAST)
+        val baseModes: List<PlaybackMode> = [LOCAL, SYNCED, BROADCAST]
 
         /** True if [mode] is a valid persistent base mode (i.e. not [WATCH_PARTY]). */
         fun isBaseMode(mode: PlaybackMode): Boolean = mode != WATCH_PARTY
+    }
+}
+
+/**
+ * Who may change a display's playback and settings.
+ *
+ * @since 1.10.x
+ */
+@Unstable
+@Serializable
+enum class DisplayAccess {
+    /** Any player may change the display, whether or not they belong to the region it stands in. */
+    EVERYONE,
+
+    /** Only members (and owners) of the `WorldGuard` region the display stands in. */
+    REGION,
+
+    /** Only the display's owner and server admins. */
+    LOCKED,
+
+    ;
+
+    /** The append-only wire value for this level. */
+    val wire: Int get() = ordinal
+
+    companion object {
+        private val byWire = entries.associateBy { it.ordinal }
+
+        val DEFAULT: DisplayAccess = LOCKED
+
+        fun fromWire(wire: Int): DisplayAccess = byWire[wire] ?: DEFAULT
+
+        fun fromLegacyLocked(locked: Boolean): DisplayAccess = if (locked) LOCKED else EVERYONE
     }
 }
 
@@ -102,18 +134,25 @@ enum class PlaybackAction {
 /** A watch-party control sent by a participant ([READY]/[UNREADY]) or the host (everything else). */
 @Unstable
 enum class WatchPartyAction {
-    READY, UNREADY, BEGIN, PAUSE, RESUME, SEEK, END, RESTART, CLOSE;
+    READY,
+    UNREADY,
+    BEGIN,
+    PAUSE,
+    RESUME,
+    SEEK,
+    END,
+    RESTART,
+    CLOSE;
 
     /** The append-only wire value for this action. */
     val wire: Int get() = ordinal
 
-    /** True if any nearby participant (not just the host) may send this action. */
+    /** `true` if any nearby participant (not just the host) may send this action. */
     val isParticipantAction: Boolean get() = this == READY || this == UNREADY
 
     companion object {
         private val byWire = entries.associateBy { it.ordinal }
 
-        /** The action for [wire], or null for unknown values (ignore unknown controls). */
         fun fromWire(wire: Int): WatchPartyAction? = byWire[wire]
     }
 }

@@ -8,7 +8,8 @@ import net.neoforged.neoforge.event.level.block.BreakBlockEvent as NeoForgeBreak
 import com.dreamdisplays.platform.server.managers.DisplayManager
 import com.dreamdisplays.platform.server.managers.PlayerManager
 import com.dreamdisplays.platform.server.managers.SelectionManager
-import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.RegionUtil
 import io.github.arnodoelinger.platformweaver.FabricOnly
 import io.github.arnodoelinger.platformweaver.NeoForgeOnly
@@ -45,7 +46,7 @@ class ProtectionListener : Listener {
     fun onBlockBreak(event: BlockBreakEvent) {
         val loc = event.block.location
         if (DisplayManager.isContains(loc) != null && PlayerManager.getVersion(event.player) == null) {
-            MessageUtil.sendMessage(event.player, "displayBlockBreak")
+            ServerMessage.DISPLAY_BLOCK_BREAK.sendTo(event.player)
         }
         cancelIfProtected(loc, event)
     }
@@ -98,24 +99,15 @@ class ProtectionListener : Listener {
     @EventHandler
     fun onPistonRetract(event: BlockPistonRetractEvent) = handlePiston(event.blocks, event)
 
-    /**
-     * Handles piston movements, checking if the piston is moving blocks protected by displays.
-     */
     private fun handlePiston(blocks: List<Block>, event: Cancellable) {
         if (event.isCancelled) return
         if (blocks.any { isLocationProtected(it.location) }) event.isCancelled = true
     }
 
-    /**
-     * Handles piston movements, checking if the piston is moving blocks protected by displays.
-     */
     private fun cancelIfProtected(loc: Location, event: Cancellable) {
         if (isLocationProtected(loc)) event.isCancelled = true
     }
 
-    /**
-     * Checks if a location is in a protected area, considering both existing displays and current selections.
-     */
     private fun isLocationProtected(loc: Location): Boolean =
         DisplayManager.isContains(loc) != null || SelectionManager.isLocationSelected(loc)
 }
@@ -132,7 +124,7 @@ object VanillaProtectionListener {
                 SelectionManager.isLocationSelected(pos, worldKey)
 
         if (isProtected && player != null && PlayerManager.getVersion(player.uuid) == null) {
-            MessageUtil.sendMessage(player, "displayBlockBreak")
+            ServerMessage.DISPLAY_BLOCK_BREAK.sendTo(player)
         }
         return isProtected
     }

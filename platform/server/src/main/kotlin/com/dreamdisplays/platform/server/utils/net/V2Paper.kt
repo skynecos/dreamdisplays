@@ -1,11 +1,11 @@
 package com.dreamdisplays.platform.server.utils.net
 
-import com.dreamdisplays.api.capability.ServerFeature
-import com.dreamdisplays.api.playback.model.FullscreenAckAction
+import com.dreamdisplays.shared.capability.ServerFeature
+import com.dreamdisplays.shared.playback.FullscreenAckAction
 import com.dreamdisplays.api.playback.model.PlaybackAction
 import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.api.playback.model.WatchPartyAction
-import com.dreamdisplays.api.protocol.model.PacketDirection
+import com.dreamdisplays.shared.protocol.PacketDirection
 import com.dreamdisplays.core.protocol.common.PacketRegistry
 import com.dreamdisplays.core.protocol.common.packets.*
 import com.dreamdisplays.platform.server.PaperServer
@@ -14,6 +14,7 @@ import com.dreamdisplays.platform.server.managers.PlayerManager
 import com.dreamdisplays.platform.server.playback.FullscreenBroadcastManager
 import com.dreamdisplays.platform.server.playback.PipPinManager
 import com.dreamdisplays.platform.server.proxy.ProxyBridge
+import com.dreamdisplays.platform.server.utils.WorldGuardRegions
 import io.github.arnodoelinger.platformweaver.PaperOnly
 import org.bukkit.entity.Player
 import org.bukkit.plugin.messaging.PluginMessageListener
@@ -26,12 +27,12 @@ const val V2_CHANNEL: String = "dreamdisplays:v2"
 /**
  * Protocol-v2 networking for the Paper flavor: receives envelope frames on [V2_CHANNEL], answers
  * the [ClientHello] handshake, and sends v2 packets to negotiated players. Business logic is
- * shared with the frozen-v1 path through [DisplayActions].
+ * shared with the other receivers through [DisplayActions].
  */
 @PaperOnly
 @NullMarked
 object PaperV2Networking : PluginMessageListener {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/PaperV2Networking")
+    private val logger = LoggerFactory.getLogger(javaClass)
     private val plugin: PaperServer by lazy { PaperServer.getInstance() }
 
     /** Encodes [packet] once and sends it to every non-null player in [players]. */
@@ -48,20 +49,25 @@ object PaperV2Networking : PluginMessageListener {
     /** The capability snapshot for [player], rebuilt from permissions and config. */
     fun buildServerHello(player: Player): ServerHello = ServerHello(
         isPremium = player.hasPermission(PaperServer.config.permissions.premium),
-        isAdmin = player.hasPermission(PaperServer.config.permissions.delete),
+        isAdmin = player.hasPermission(PaperServer.config.permissions.deleteOthers),
         isReportingEnabled = PaperServer.config.settings.webhookUrl.isNotEmpty(),
-        allowedFeatures = ServerFeature.playbackFeatureWires,
+        allowedFeatures = serverFeatureWires(),
         defaultVolume = PaperServer.config.settings.defaultVolume,
         maxDisplays = maxDisplaysFor(player.hasPermission(PaperServer.config.permissions.createBypass)),
     )
 
-    /** [ServerHello.maxDisplays] for a player: `-1` (unlimited) when [hasBypass] or no cap is configured. */
+    private fun serverFeatureWires(): List<String> =
+        if (WorldGuardRegions.isAvailable()) {
+            ServerFeature.playbackFeatureWires + ServerFeature.REGION_ACCESS.wire
+        } else {
+            ServerFeature.playbackFeatureWires
+        }
+
     private fun maxDisplaysFor(hasBypass: Boolean): Int {
         val cap = PaperServer.config.settings.maxDisplaysPerPlayer
         return if (hasBypass || cap <= 0) -1 else cap
     }
 
-    /** Decodes an envelope frame and dispatches the packet; unknown type ids are skipped. */
     override fun onPluginMessageReceived(channel: String, player: Player, message: ByteArray) {
         if (channel != V2_CHANNEL) return
         val packet = runCatching { PacketRegistry.decode(message, PacketDirection.CLIENT_TO_SERVER) }
@@ -75,7 +81,7 @@ object PaperV2Networking : PluginMessageListener {
             is DisplayDelete -> DisplayActions.delete(player, packet.id)
             is ReportDisplay -> DisplayManager.report(packet.id, player)
             is SetVideo -> DisplayActions.setVideo(player, packet.id, packet.url, packet.lang)
-            is SetLocked -> DisplayActions.setLocked(player, packet.id, packet.locked)
+            is SetLocked -> DisplayActions.setAccess(player, packet.id, packet.accessLevel())
             is SetMode -> DisplayActions.setMode(
                 player,
                 packet.id,
@@ -107,14 +113,10 @@ object PaperV2Networking : PluginMessageListener {
         }
     }
 
-    /**
-     * Marks [player] as a v2 peer, replies with the [ServerHello] and the display batch, and runs the shared
-     * version-check flow.
-     */
     private fun handleHello(player: Player, hello: ClientHello) {
         if (V2PlayerTracker.isV2(player.uniqueId)) return
         V2PlayerTracker.markV2(player.uniqueId, hello)
-        send(listOf(player), buildServerHello(player))
+        send([player], buildServerHello(player))
         DisplayActions.recordVersionAndCheckUpdates(player, hello.modVersion)
         DisplayActions.sendAllDisplays(player)
         FullscreenBroadcastManager.onPlayerJoin(player.uniqueId)

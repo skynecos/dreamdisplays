@@ -3,35 +3,50 @@ package com.dreamdisplays.platform.client
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayRegistry
 import com.dreamdisplays.platform.client.platform.NeoForgePlatformIntegrationProvider
-import com.dreamdisplays.api.platform.service.keys.PlatformServices
+import com.dreamdisplays.core.services.keys.PlatformServices
+//? if >=26.3 {
+import com.dreamdisplays.platform.client.render.subtitleTextSubmitter
+//?}
 import com.dreamdisplays.platform.client.render.ScreenRenderer
 import com.dreamdisplays.platform.client.render.UnshadedDisplayPass
-import com.dreamdisplays.platform.client.render.WorldTextSubmitter
 import com.dreamdisplays.platform.client.Mod as DreamMod
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
-//? if >=26.2 {
-import net.minecraft.network.chat.Style
-import net.minecraft.util.FormattedCharSequence
-import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent
-//?}
+import net.minecraft.core.BlockPos
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.neoforged.api.distmarker.Dist
 import net.neoforged.bus.api.IEventBus
 import net.neoforged.bus.api.SubscribeEvent
+import com.dreamdisplays.platform.client.ui.config.ClothConfigScreen
+import net.neoforged.fml.ModContainer
+import net.neoforged.fml.ModList
 import net.neoforged.fml.common.Mod
+import net.neoforged.neoforge.client.gui.IConfigScreenFactory
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
 import net.neoforged.neoforge.client.event.ClientTickEvent
 import net.neoforged.neoforge.client.event.RenderGuiEvent
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent
-//? if >=1.21.11 {
-import net.neoforged.neoforge.client.event.lifecycle.ClientStoppingEvent
+//? if >=26.3 {
+import net.minecraft.client.renderer.SubmitNodeCollector
+import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent
 //?}
+//? if >=1.21.11 {
+import net.neoforged.neoforge.client.event.ExtractBlockOutlineRenderStateEvent
+import net.neoforged.neoforge.client.event.lifecycle.ClientStoppingEvent
+//?} else
+/*import net.neoforged.neoforge.client.event.RenderHighlightEvent*/
 import net.neoforged.neoforge.common.NeoForge
 
 @Mod(value = Initializer.MOD_ID, dist = [Dist.CLIENT])
-class Client(modEventBus: IEventBus) : DreamMod {
+class Client(modEventBus: IEventBus, container: ModContainer) : DreamMod {
     init {
+        if (ModList.get().isLoaded("cloth_config")) {
+            container.registerExtensionPoint(
+                IConfigScreenFactory::class.java,
+                IConfigScreenFactory { _, parent -> ClothConfigScreen.create(parent) },
+            )
+        }
+
         // The Platform must be in the registry before onModInit, so ClientStartupManager
         // can host the ClientApplication on top of it during bootstrap.
         DreamServices.registry.register(PlatformServices.PLATFORM, NeoForgePlatformIntegrationProvider.create())
@@ -71,44 +86,30 @@ class Client(modEventBus: IEventBus) : DreamMod {
     //?}
 
     //? if >=26 {
-    //? if >=26.2 {
+    //? if >=26.3 {
     @SubscribeEvent
-    fun onRenderDisplays(event: SubmitCustomGeometryEvent) {
+    fun onSubmitDisplays(event: SubmitCustomGeometryEvent) {
         val mc = Minecraft.getInstance()
         if (mc.level == null || mc.player == null) return
         val camera = mainCamera(mc)
-        UnshadedDisplayPass.capture(event.poseStack, camera)
-        ScreenRenderer.render(
-            event.poseStack,
-            camera,
-            submitText = WorldTextSubmitter { stack, text, x, y, color, shadow, mode, backgroundColor, packedLight ->
-                event.submitNodeCollector.submitText(
-                    stack,
-                    x,
-                    y,
-                    FormattedCharSequence.forward(text, Style.EMPTY),
-                    shadow,
-                    mode,
-                    packedLight,
-                    color,
-                    backgroundColor,
-                    0,
-                )
-            },
-        )
+        val stack = event.poseStack
+        val collector = event.submitNodeCollector
+        UnshadedDisplayPass.capture(stack, camera)
+        ScreenRenderer.render(stack, camera, submitText = subtitleTextSubmitter(collector)) { type, appendVertices ->
+            collector.submitCustomGeometry(
+                stack, type, SubmitNodeCollector.CustomGeometryRenderer { pose, consumer -> appendVertices(pose, consumer) },
+            )
+        }
     }
     //?} else
-    /*
-    @SubscribeEvent
+    /*@SubscribeEvent
     fun onRenderDisplays(event: RenderLevelStageEvent.AfterOpaqueFeatures) {
         val mc = Minecraft.getInstance()
         if (mc.level == null || mc.player == null) return
         val camera = mainCamera(mc)
         UnshadedDisplayPass.capture(event.poseStack, camera)
         ScreenRenderer.render(event.poseStack, camera)
-    }
-    */
-    //?}
+    }*/
     //?} else
     /*
     //? if ==1.21.11 {
@@ -132,7 +133,26 @@ class Client(modEventBus: IEventBus) : DreamMod {
     //?}
     */
 
-    /** Main camera accessor. */
+    //? if >=1.21.11 {
+    @SubscribeEvent
+    fun onExtractBlockOutline(event: ExtractBlockOutlineRenderStateEvent) {
+        if (isDisplayBlock(event.blockPos)) {
+            event.isCanceled = true
+        }
+    }
+    //?} else
+    /*
+    @SubscribeEvent
+    fun onRenderBlockHighlight(event: RenderHighlightEvent.Block) {
+        if (isDisplayBlock(event.target.blockPos)) {
+            event.isCanceled = true
+        }
+    }
+    */
+
+    private fun isDisplayBlock(pos: BlockPos): Boolean =
+        DisplayRegistry.getScreens().any { it.isInScreen(pos) }
+
     private fun mainCamera(mc: Minecraft): Camera {
         //? if >=26.2 {
         return mc.gameRenderer.mainCamera()

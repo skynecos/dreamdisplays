@@ -1,8 +1,8 @@
 package com.dreamdisplays.platform.client.core.modules
 
-import com.dreamdisplays.api.runtime.module.DreamDisplaysModule
-import com.dreamdisplays.api.runtime.module.ModuleContext
-import com.dreamdisplays.api.runtime.registry.service.register
+import com.dreamdisplays.core.runtime.DreamDisplaysModule
+import com.dreamdisplays.core.runtime.ModuleContext
+import com.dreamdisplays.core.runtime.register
 import com.dreamdisplays.platform.client.managers.ClientStateManager
 import com.dreamdisplays.platform.client.overlay.CrosshairPolicy
 import com.dreamdisplays.platform.client.overlay.OverlayManager
@@ -13,10 +13,8 @@ import com.dreamdisplays.platform.client.ui.PipOverlayManager
 
 /** Installs overlay, crosshair, and popout services. */
 object ClientOverlayModule : DreamDisplaysModule {
-    /** The ID of this module. */
     override val id: String = "dreamdisplays:client_overlay"
 
-    /** Installs the overlay manager, crosshair policy, and popout manager. */
     override fun install(context: ModuleContext) {
         val services = context.services
         services.register<OverlayManager>(PipOverlayManager)

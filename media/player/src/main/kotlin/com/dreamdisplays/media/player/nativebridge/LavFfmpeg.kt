@@ -10,24 +10,19 @@ import java.io.*
 import java.net.URI
 import java.util.zip.ZipInputStream
 
-/** Downloads and unpacks FFmpeg shared libraries from BtbN for the in-process libav backend. */
+/** Downloads and unpacks `FFmpeg` shared libraries from BtbN for the in-process libav backend. */
 object LavFfmpeg {
-    private val logger = LoggerFactory.getLogger("DreamDisplays/LavFFmpeg")
-
-    /** BtbN latest release API; keep the branch suffix in sync with `.github/workflows/_build.yml`. */
+    private val logger = LoggerFactory.getLogger(javaClass)
     private const val LATEST_RELEASE_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
-    private const val FFMPEG_BRANCH_SUFFIX = "8.1"
+    private const val FFMPEG_BRANCH_SUFFIX = "9.0"
 
     private data class Source(
-        /** BtbN asset name matcher for the latest release. */
         val assetNameRegex: Regex,
-        /** True for `.tar.xz` (Linux), false for `.zip` (Windows). */
         val isTarXz: Boolean,
-        /** In-archive directory holding the shared libraries (`bin` on Windows, `lib` on Linux). */
         val libDir: String,
     )
 
-    /** Ensures [dir] contains FFmpeg libraries, downloading and unpacking them on first run. */
+    /** Ensures [dir] contains `FFmpeg` libraries, downloading and unpacking them on first run. */
     fun ensure(dir: File): Boolean {
         if (hasFfmpeg(dir)) return true
         val source = source() ?: return false
@@ -53,7 +48,6 @@ object LavFfmpeg {
         }
     }
 
-    /** True once at least the core decode library is present in [dir]. */
     private fun hasFfmpeg(dir: File): Boolean =
         dir.listFiles()
             ?.any { it.isFile && it.name.lowercase().let { n -> "avcodec" in n && isSharedLibrary(n) } } == true
@@ -61,7 +55,6 @@ object LavFfmpeg {
     private fun isSharedLibrary(name: String): Boolean =
         name.endsWith(".dll") || name.endsWith(".dylib") || ".so" in name
 
-    /** Resolves the prebuilt shared build for this platform, or null when none is available. */
     private fun source(): Source? = when {
         OsInfo.isMac -> null
         OsInfo.isWindows -> {
@@ -77,7 +70,7 @@ object LavFfmpeg {
 
     private fun assetRegex(arch: String, extension: String): Regex =
         Regex(
-            """^ffmpeg-n8\..*-${Regex.escape(arch)}-lgpl-shared-${Regex.escape(FFMPEG_BRANCH_SUFFIX)}\.${
+            """^ffmpeg-n9\..*-${Regex.escape(arch)}-lgpl-shared-${Regex.escape(FFMPEG_BRANCH_SUFFIX)}\.${
                 Regex.escape(
                     extension
                 )
@@ -94,7 +87,6 @@ object LavFfmpeg {
             ?: throw IOException("No BtbN FFmpeg asset matched ${source.assetNameRegex.pattern}.")
     }
 
-    /** Extracts every shared library (and the LICENSE) under `<root>/[libDir]/` from a zip into [dir]. */
     @Throws(IOException::class)
     private fun extractZipLibs(archive: File, libDir: String, dir: File): Int {
         var count = 0
@@ -112,7 +104,6 @@ object LavFfmpeg {
         return count
     }
 
-    /** Extracts every shared library (and the LICENSE) under `<root>/[libDir]/` from a tar.xz into [dir]. */
     @Throws(IOException::class)
     private fun extractTarXzLibs(archive: File, libDir: String, dir: File): Int {
         var count = 0
@@ -135,7 +126,6 @@ object LavFfmpeg {
         return count
     }
 
-    /** Matches `<root>/<libDir>/<sharedLibrary>` entries plus a top-level LICENSE file. */
     private fun wantedEntry(entryName: String, libDir: String): Boolean {
         val parts = entryName.split('/')
         val leaf = parts.last()
@@ -148,7 +138,6 @@ object LavFfmpeg {
         BufferedOutputStream(FileOutputStream(dest)).use { out -> input.transferTo(out) }
     }
 
-    /** Downloads [url] to [dest] with periodic progress log lines (every 10 %). */
     @Throws(IOException::class)
     private fun downloadWithProgress(url: String, dest: File) {
         var announced = false
@@ -179,7 +168,6 @@ object LavFfmpeg {
         }
     }
 
-    /** Reads the BtbN latest-release API response, following up to 10 redirect hops. */
     @Throws(IOException::class)
     private fun readLatestReleaseJson(): String {
         return DreamHttpClient.readText(

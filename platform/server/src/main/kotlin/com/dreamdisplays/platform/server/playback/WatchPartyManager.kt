@@ -1,6 +1,6 @@
 package com.dreamdisplays.platform.server.playback
 
-import com.dreamdisplays.api.playback.policy.PlaybackPermissions
+import com.dreamdisplays.shared.playback.PlaybackPermissions
 import com.dreamdisplays.api.playback.model.Timeline
 import com.dreamdisplays.api.playback.model.WatchPartyAction
 import com.dreamdisplays.api.playback.model.WatchPartySessionState
@@ -15,15 +15,13 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
 /** Runs the ephemeral watch-party state machine, one session per display. Only the host drives playback; nearby players just receive updates. */
-// TODO: release in 1.10.0
+// TODO: release in 1.11.0
 object WatchPartyManager {
     private const val COUNTDOWN_MS = 3_000L
     private const val HOST_GRACE_MS = 30_000L
     private const val PERIODIC_BROADCAST_MS = 1_000L
-
     private val controlThrottle = ActionThrottle()
     private const val CONTROL_COOLDOWN_MS = 100L
-
     private lateinit var transport: PlaybackTransport
     private val sessions = ConcurrentHashMap<UUID, Session>()
 
@@ -64,7 +62,10 @@ object WatchPartyManager {
     /** Starts a session on [display] with [hostId] as host. Returns false if a session already exists or the player lacks permission. */
     fun start(display: DisplayData, hostId: UUID, url: String, lang: String, virtual: Boolean = false): Boolean {
         if (hasSession(display.id)) return false
-        val ctx = PlaybackContexts.of(display, hostId, transport.isAdmin(hostId))
+        val ctx = PlaybackContexts.of(
+            display, hostId, transport.isAdmin(hostId),
+            { transport.isTerritoryMember(display, hostId) },
+        )
         if (!PlaybackPermissions.canStartWatchParty(ctx)) return false
 
         val now = transport.nowMs()
@@ -107,7 +108,10 @@ object WatchPartyManager {
         val now = transport.nowMs()
 
         if (action == WatchPartyAction.CLOSE) {
-            val ctx = PlaybackContexts.of(display, senderId, transport.isAdmin(senderId))
+            val ctx = PlaybackContexts.of(
+                display, senderId, transport.isAdmin(senderId),
+                { transport.isTerritoryMember(display, senderId) },
+            )
             if (!PlaybackPermissions.canCloseWatchParty(ctx)) return false
             close(display)
             return true
@@ -287,10 +291,9 @@ object WatchPartyManager {
         }
     }
 
-    /** Players currently "nearby" the session: for a `virtual` network party, the proxy-assigned [Session.members] filtered to who's online. */
     private fun nearbyIds(session: Session): List<UUID> {
         if (session.virtual) return session.members.filter { it in transport.onlinePlayerIds() }
-        val display = DisplayManager.getDisplayData(session.displayId) ?: return emptyList()
+        val display = DisplayManager.getDisplayData(session.displayId) ?: return []
         return transport.nearbyPlayerIds(display)
     }
 

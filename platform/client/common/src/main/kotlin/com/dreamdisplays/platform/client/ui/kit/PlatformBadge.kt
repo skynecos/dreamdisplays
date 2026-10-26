@@ -1,7 +1,8 @@
 package com.dreamdisplays.platform.client.ui.kit
 
-import com.dreamdisplays.api.media.search.model.MediaSearchResult
-import com.dreamdisplays.api.media.source.model.MediaPlatform
+import com.dreamdisplays.platform.client.ui.ClientMessage
+import com.dreamdisplays.api.media.search.MediaSearchResult
+import com.dreamdisplays.api.media.source.MediaPlatform
 
 /**
  * The single source of truth for the little coloured platform tag ("Twitch", "Vimeo", "Kick", "Link") drawn on search
@@ -15,14 +16,12 @@ object PlatformBadge {
      */
     data class Badge(val labelKey: String, val bgColor: Int, val textColor: Int)
 
-    /** Text color for a tag whose brand background is too bright for white text. */
     private const val DARK_TEXT = 0xFF11151A.toInt()
-
-    private val TWITCH = Badge("dreamdisplays.ui.twitch", UiTheme.ACCENT_TWITCH_TAG, UiTheme.TEXT_PRIMARY)
-    private val VIMEO = Badge("dreamdisplays.ui.vimeo", UiTheme.ACCENT_VIMEO_TAG, DARK_TEXT)
-    private val KICK = Badge("dreamdisplays.ui.kick", UiTheme.ACCENT_KICK_TAG, DARK_TEXT)
-    private val BILIBILI = Badge("dreamdisplays.ui.bilibili", UiTheme.ACCENT_BILIBILI_TAG, DARK_TEXT)
-    private val CUSTOM = Badge("dreamdisplays.ui.custom", UiTheme.ACCENT_CUSTOM_TAG, UiTheme.TEXT_PRIMARY)
+    private val TWITCH = Badge(ClientMessage.UI_TWITCH.key, UiTheme.ACCENT_TWITCH_TAG, UiTheme.TEXT_PRIMARY)
+    private val VIMEO = Badge(ClientMessage.UI_VIMEO.key, UiTheme.ACCENT_VIMEO_TAG, DARK_TEXT)
+    private val KICK = Badge(ClientMessage.UI_KICK.key, UiTheme.ACCENT_KICK_TAG, DARK_TEXT)
+    private val BILIBILI = Badge(ClientMessage.UI_BILIBILI.key, UiTheme.ACCENT_BILIBILI_TAG, DARK_TEXT)
+    private val CUSTOM = Badge(ClientMessage.UI_CUSTOM.key, UiTheme.ACCENT_CUSTOM_TAG, UiTheme.TEXT_PRIMARY)
 
     /** The badge for [platform], or null when it needs none (a plain YouTube / long-tail result). */
     fun forPlatform(platform: MediaPlatform): Badge? = when (platform) {

@@ -1,7 +1,7 @@
 package com.dreamdisplays.platform.client.ui
 
-import com.dreamdisplays.api.playback.model.FullscreenAckAction
-import com.dreamdisplays.api.playback.model.FullscreenMode
+import com.dreamdisplays.shared.playback.FullscreenAckAction
+import com.dreamdisplays.shared.playback.FullscreenMode
 import com.dreamdisplays.core.protocol.common.packets.FullscreenAck
 import com.dreamdisplays.platform.client.displays.DisplayScreen
 import com.dreamdisplays.platform.client.net.ProtocolRouter
@@ -20,10 +20,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor
  * Rendered before [PipOverlayManager] in the HUD hooks so PiP stays on top.
  */
 object FullscreenOverlayManager {
-    /** Live plus still-fading-out overlays, in open order. */
     private val overlays = mutableListOf<FullscreenOverlay>()
-
-    /** Tracks whether a GUI screen was open last tick, for Esc (pause-screen) edge detection. */
     private var screenWasOpen = false
 
     /** The single non-closing overlay, or null when none is active. */
@@ -31,6 +28,12 @@ object FullscreenOverlayManager {
 
     /** True when any overlay (including a fading-out one) still needs rendering. */
     val isEmpty: Boolean get() = overlays.isEmpty()
+
+    /**
+     * True while the vanilla HUD (hotbar, health / hunger, chat, ...) should stay hidden behind a
+     * fullscreen video.
+     */
+    val shouldHideVanillaHud: Boolean get() = !isEmpty
 
     /** True while an immersive-mode overlay is active; used to suppress the crosshair. */
     val isImmersiveActive: Boolean

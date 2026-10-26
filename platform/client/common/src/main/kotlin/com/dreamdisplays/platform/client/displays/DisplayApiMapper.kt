@@ -1,20 +1,20 @@
 package com.dreamdisplays.platform.client.displays
 
-import com.dreamdisplays.api.display.model.Display
+import com.dreamdisplays.api.display.model.DisplayInfo
 import com.dreamdisplays.api.display.model.property.DisplayBounds
 import com.dreamdisplays.api.display.model.property.DisplayId
 import com.dreamdisplays.api.display.model.property.DisplayState
-import com.dreamdisplays.api.storage.model.FullDisplayData
+import com.dreamdisplays.shared.storage.DisplayData
 import com.dreamdisplays.api.display.model.settings.DisplaySettings as ApiDisplaySettings
 
 /**
  * Mapping between the internal mutable [DisplayScreen] and the immutable public API / persistence types
- * ([Display], [DisplayState], [FullDisplayData]). Kept separate from [DisplayRegistry] so the manager
+ * ([DisplayInfo], [DisplayState], [DisplayData]). Kept separate from [DisplayRegistry] so the manager
  * stays focused on registry and event concerns.
  */
 
-/** Projects this screen into the immutable public [Display] snapshot, including its current runtime state. */
-internal fun DisplayScreen.toDisplay(): Display = Display(
+/** Projects this screen into the immutable public [DisplayInfo] snapshot, including its current runtime state. */
+internal fun DisplayScreen.toDisplay(): DisplayInfo = DisplayInfo(
     id = DisplayId(uuid),
     bounds = DisplayBounds(
         x = pos.x.toDouble(), y = pos.y.toDouble(), z = pos.z.toDouble(),
@@ -23,13 +23,14 @@ internal fun DisplayScreen.toDisplay(): Display = Display(
     ),
     settings = ApiDisplaySettings(
         volume = volume, quality = quality, brightness = brightness,
-        muted = muted, paused = isPaused, renderDistance = renderDistance.coerceIn(32, 192),
+        muted = muted, paused = isPaused,
         urlOverride = null, audioTrackName = lang,
     ),
     url = videoUrl,
     state = toRuntimeState(),
     mode = effectiveMode,
     watchParty = watchParty,
+    customData = customData,
 )
 
 /** Derives the current [DisplayState] from the screen's media / error / playback state. */
@@ -46,7 +47,7 @@ internal fun DisplayScreen.toRuntimeState(): DisplayState = when {
 }
 
 /** Captures the full persistable snapshot of this screen for the server display registry. */
-internal fun DisplayScreen.toFullDisplayData(): FullDisplayData = FullDisplayData(
+internal fun DisplayScreen.toFullDisplayData(): DisplayData = DisplayData(
     uuid = uuid,
     x = pos.x,
     y = pos.y,
@@ -54,16 +55,17 @@ internal fun DisplayScreen.toFullDisplayData(): FullDisplayData = FullDisplayDat
     facing = facing,
     width = width,
     height = height,
+    depth = depth,
+    conforming = conforming,
     videoUrl = videoUrl ?: "",
-    lang = lang ?: "",
     subtitleUrl = subtitleUrl,
+    lang = lang ?: "",
     volume = volume,
     quality = quality.serialize(),
     brightness = brightness,
     muted = muted,
     mode = mode,
     ownerUuid = ownerUuid,
-    renderDistance = renderDistance,
     currentTimeNanos = currentTimeNanos,
     rotation = rotation.quarterTurns,
     qualityCap = qualityCap,

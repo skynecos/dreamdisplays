@@ -22,7 +22,6 @@ class HelpCommand : SubCommand {
     override val permission = PaperServer.config.permissions.help
     override val playerOnly = true
 
-    /** Prints the help message listing every `/display` subcommand. */
     override fun execute(sender: CommandSender, args: Array<String?>) {
         val player = (sender as? Player) ?: return
 
@@ -39,8 +38,7 @@ class HelpCommand : SubCommand {
 
         line("displayHelpCreate")
         line("displayHelpVideo")
-        sendMediaMessage(sender, "§f/display video this file <dosya.mp4> [dil] §7- yerel MP4 ayarla")
-        sendMediaMessage(sender, "§f/display subtitle this <url|file|off> §7- WebVTT altyazıyı yönet")
+        MessageUtil.sendColoredMessage(sender, "&f /display subtitle this|<id> url <url> | file <dosya.vtt> | off")
         line("displayHelpName")
         line("displayHelpInfo")
         line("displayHelpDelete")

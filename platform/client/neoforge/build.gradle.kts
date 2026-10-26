@@ -21,6 +21,11 @@ repositories {
         name = "fabricLoomRemappedMods"
     }
     maven("https://thedarkcolour.github.io/KotlinForForge/")
+    maven("https://maven.enginehub.org/repo/")
+    maven("https://prmaven.neoforged.net/NeoForge/pr3403")
+    maven("https://api.modrinth.com/maven") {
+        content { includeGroup("maven.modrinth") }
+    }
 }
 
 sourceSets.main {
@@ -79,6 +84,10 @@ sourceSets.create("vendoredLibraries") {
 }
 
 val isLegacyObfuscated = scVersion("minecraft.version").startsWith("1.")
+
+// The rendertype package only exists from 1.21.11.
+val hasRenderTypePackage = (scVersion("minecraft.version").split(".").map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0))
+    .let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch >= 1_021_011 }
 if (isLegacyObfuscated) {
     evaluationDependsOn(":platform:client:fabric")
 }
@@ -87,9 +96,20 @@ configurations.all {
     resolutionStrategy.force("org.slf4j:slf4j-api:2.0.9")
 }
 
+val isolatedSqliteJdbc = configurations.register("isolatedSqliteJdbc") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
 dependencies {
     compileOnly(libs.platformweaverAnnotations)
     compileOnly(libs.luckpermsApi)
+    compileOnly(libs.worldguardApi) {
+        exclude(group = "com.google.guava", module = "guava")
+        exclude(group = "com.google.code.gson", module = "gson")
+        exclude(group = "it.unimi.dsi", module = "fastutil")
+    }
     compileOnly(libs.bstats)
     compileOnly("io.papermc.paper:paper-api:${scVersion("paper.api.version")}")
     compileOnly("net.fabricmc:fabric-loader:${scVersion("fabric.loader.version")}")
@@ -107,7 +127,8 @@ dependencies {
     implementation(libs.exposedMigrationJdbc)
     implementation(libs.hikari)
     runtimeOnly(libs.sqliteJdbc)
-    jarJar(libs.sqliteJdbc)
+    runtimeOnly("maven.modrinth:cloth-config:${scVersion("cloth.config.version")}+neoforge")
+    isolatedSqliteJdbc(libs.sqliteJdbc)
     vendoredLibraries(libs.tomlj)
     vendoredLibraries(libs.semver4j)
     vendoredLibraries(libs.caffeine)
@@ -121,6 +142,7 @@ dependencies {
     vendoredLibraries(libs.newpipeExtractor)
     shadow(project(":core"))
     shadow(project(":api"))
+    shadow(project(":shared"))
     shadow(project(":util"))
     shadow(project(":media:runtime"))
     shadow(project(":media:source"))
@@ -153,6 +175,7 @@ neoForge {
             sourceSet(mainSourceSetOf(":platform:client:common"))
             sourceSet(mainSourceSetOf(":core"))
             sourceSet(mainSourceSetOf(":api"))
+            sourceSet(mainSourceSetOf(":shared"))
             sourceSet(mainSourceSetOf(":util"))
             sourceSet(mainSourceSetOf(":media:runtime"))
             sourceSet(mainSourceSetOf(":media:source"))
@@ -182,10 +205,12 @@ tasks.processResources {
     val neoForgeLoaderRange = scVersion("neoforge.loader.range")
     val minecraftRange = scVersion("neoforge.minecraft.range")
     val javaVersion = scVersion("java.version")
+    val stripOitMixin = !hasRenderTypePackage
     inputs.property("version", projectVersion)
     inputs.property("neoforgeLoaderRange", neoForgeLoaderRange)
     inputs.property("minecraftRange", minecraftRange)
     inputs.property("javaVersion", javaVersion)
+    inputs.property("stripOitMixin", stripOitMixin)
     filesMatching("META-INF/neoforge.mods.toml") {
         expand(
             mapOf(
@@ -197,6 +222,7 @@ tasks.processResources {
     }
     filesMatching(listOf("dreamdisplays.mixins.json", "dreamdisplays.server.mixins.json")) {
         expand(mapOf("javaVersion" to javaVersion))
+        if (stripOitMixin) filter { line -> if ("\"DisplayOitPhase\"" in line) "" else line }
     }
     filesMatching("assets/dreamdisplays/version.txt") {
         expand(mapOf("version" to projectVersion))
@@ -207,15 +233,11 @@ java {
     withSourcesJar()
 }
 
-val sqliteJdbcJarJarFile = configurations.named("jarJar").map { configuration ->
-    configuration.first { it.name.startsWith("sqlite-jdbc-") }
-}
-
-val trimmedSqliteJdbcJarJar = tasks.register<Zip>("trimmedSqliteJdbcJarJar") {
-    from(sqliteJdbcJarJarFile.map { zipTree(it) })
+val trimmedSqliteJdbc = tasks.register<Zip>("trimmedSqliteJdbc") {
+    from(isolatedSqliteJdbc.map { configuration -> configuration.map { zipTree(it) } })
     excludeDreamDisplaysSqliteNativeExtras()
-    archiveFileName.set(sqliteJdbcJarJarFile.map { it.name })
-    destinationDirectory.set(layout.buildDirectory.dir("generated/trimmedJarJar"))
+    archiveFileName.set("sqlite-jdbc.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/isolatedSqliteJdbc"))
 }
 
 tasks.shadowJar {
@@ -224,11 +246,8 @@ tasks.shadowJar {
     archiveVersion.set("$activeStonecutterVersion-${rootProject.version}")
     includeDreamDisplaysSharedContents()
     relocateDreamDisplaysSharedPackages()
-    from(tasks.named("jarJar")) {
-        exclude("META-INF/jarjar/sqlite-jdbc-*.jar")
-    }
-    from(trimmedSqliteJdbcJarJar) {
-        into("META-INF/jarjar")
+    from(trimmedSqliteJdbc) {
+        into("META-INF/dreamdisplays")
     }
 }
 

@@ -3,8 +3,9 @@
 package com.dreamdisplays.api.media.source.url
 
 import com.dreamdisplays.api.Unstable
-import com.dreamdisplays.api.media.source.model.CustomMediaKind
-import com.dreamdisplays.api.media.source.model.MediaSource
+import com.dreamdisplays.api.media.source.CustomMediaKind
+import com.dreamdisplays.api.media.source.CustomMediaUrls
+import com.dreamdisplays.api.media.source.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -48,13 +49,13 @@ class CustomMediaUrlsTest {
 
     @Test
     fun googleDriveShareBecomesDirectDownload() = assertEquals(
-        "https://drive.google.com/uc?export=download&id=1A2B3C4D5E6F",
+        "https://drive.usercontent.google.com/download?id=1A2B3C4D5E6F&export=download&confirm=t",
         CustomMediaUrls.normalize("https://drive.google.com/file/d/1A2B3C4D5E6F/view?usp=sharing"),
     )
 
     @Test
     fun googleDriveOpenIdBecomesDirectDownload() = assertEquals(
-        "https://drive.google.com/uc?export=download&id=1A2B3C4D5E6F",
+        "https://drive.usercontent.google.com/download?id=1A2B3C4D5E6F&export=download&confirm=t",
         CustomMediaUrls.normalize("https://drive.google.com/open?id=1A2B3C4D5E6F"),
     )
 
@@ -78,7 +79,7 @@ class CustomMediaUrlsTest {
 
     @Test
     fun videoExtensionsAreProgressive() {
-        for (url in listOf("https://e.com/a.mp4", "https://e.com/a.webm", "https://e.com/a.mkv")) {
+        for (url in ["https://e.com/a.mp4", "https://e.com/a.webm", "https://e.com/a.mkv"]) {
             assertEquals(CustomMediaKind.PROGRESSIVE, CustomMediaUrls.classify(url), url)
         }
     }

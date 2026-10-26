@@ -8,6 +8,7 @@ import net.minecraft.core.Direction
 import net.minecraft.world.phys.AABB
 import java.util.*
 import java.util.UUID.randomUUID
+import kotlin.math.abs
 
 /**
  * Vanilla implementation of [SelectionData], shared by `Fabric` and `NeoForge`.
@@ -28,13 +29,16 @@ class VanillaSelectionData : BaseSelectionData() {
     /** Player's horizontal look cardinal at first-point time; orients floor/ceiling content. */
     var horizontalFacing: Direction = Direction.NORTH
 
-    /** Resets all selection state back to defaults. */
+    /** True when the selection contains slabs or stairs and the screen should wrap them. */
+    var conforming: Boolean = false
+
     override fun reset() {
         pos1 = null
         pos2 = null
         worldKey = null
         facing = Direction.NORTH
         horizontalFacing = Direction.NORTH
+        conforming = false
         isReady = false
     }
 
@@ -70,20 +74,21 @@ class VanillaSelectionData : BaseSelectionData() {
         val r = requireNotNull(region()) { "region is null." }
         val wk = requireNotNull(worldKey) { "worldKey is null." }
         val isVertical = facing == Direction.UP || facing == Direction.DOWN
+        val (screenWidth, screenHeight, _) = r.screenExtents(abs(facing.stepX), abs(facing.stepY), abs(facing.stepZ))
         return VanillaDisplayData(
             id = randomUUID(),
             ownerId = ownerId,
             worldKey = wk,
             pos1 = r.getMinBlockPos(),
             pos2 = r.getMaxBlockPos(),
-            width = r.screenWidth(isVertical),
-            height = r.screenHeight(isVertical),
+            width = screenWidth,
+            height = screenHeight,
             facing = facing,
             rotation = if (isVertical) horizontalFacing.toCardinal().toContentRotation() else DisplayRotation.NONE,
+            conforming = conforming,
         )
     }
 
-    /** Maps this direction to the shared horizontal [Cardinal], defaulting to [Cardinal.NORTH]. */
     private fun Direction.toCardinal(): Cardinal = when (this) {
         Direction.NORTH -> Cardinal.NORTH
         Direction.EAST -> Cardinal.EAST

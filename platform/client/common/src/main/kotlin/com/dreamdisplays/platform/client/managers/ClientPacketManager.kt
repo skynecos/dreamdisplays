@@ -1,10 +1,11 @@
 package com.dreamdisplays.platform.client.managers
 
 import com.dreamdisplays.api.display.model.property.DisplayId
-import com.dreamdisplays.api.display.service.DisplaySystem
-import com.dreamdisplays.api.runtime.registry.service.getOrNull
+import com.dreamdisplays.core.services.DisplaySystem
+import com.dreamdisplays.core.runtime.getOrNull
 import com.dreamdisplays.core.protocol.common.packets.*
 import com.dreamdisplays.core.services.DisplayStorage
+import com.dreamdisplays.platform.client.Initializer
 import com.dreamdisplays.platform.client.Mod
 import com.dreamdisplays.platform.client.capabilities.CapabilityNegotiationService
 import com.dreamdisplays.platform.client.core.DreamServices
@@ -13,17 +14,14 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import org.slf4j.LoggerFactory
 
 /**
- * Single client-side dispatcher for incoming [DreamPacket]s (v2 and legacy-lifted alike) and the
+ * Single client-side dispatcher for incoming [DreamPacket]s and the
  * raw payload sender bound to the platform [Mod] implementation.
  */
 object ClientPacketManager {
-    /** Logger. */
-    private val logger = LoggerFactory.getLogger("DreamDisplays/ClientPacketManager")
-
-    /** The platform [Mod] used to send raw payloads; set via [bind]. */
+    private val logger = LoggerFactory.getLogger(javaClass)
     private lateinit var mod: Mod
 
-    /** The latest applied [ServerHello]; legacy per-flag packets merge into this snapshot. */
+    /** The latest applied [ServerHello]. */
     @Volatile
     var serverSnapshot: ServerHello = ServerHello(); private set
 
@@ -61,7 +59,6 @@ object ClientPacketManager {
         }
     }
 
-    /** Replaces the capability snapshot wholesale and mirrors the flags into the client state. */
     private fun applyServerHello(packet: ServerHello) {
         serverSnapshot = packet
         ClientStateManager.isPremium = packet.isPremium
@@ -69,16 +66,15 @@ object ClientPacketManager {
         ClientStateManager.isReportingEnabled = packet.isReportingEnabled
         DreamServices.registry.getOrNull<CapabilityNegotiationService>()
             ?.onServerCapabilities(packet)
+        Initializer.sendPacket(SetDisplaysEnabled(ClientStateManager.displaysEnabled))
     }
 
-    /** Server-forced display toggle (admin command), persisted like the legacy channel did. */
     private fun applyDisplaysEnabled(enabled: Boolean) {
         ClientStateManager.displaysEnabled = enabled
         ClientStateManager.config.displaysEnabled = enabled
         ClientStateManager.config.save()
     }
 
-    /** Removes a deleted display from the registry and erases its saved data. */
     private fun handleDelete(packet: DisplayDelete) {
         DisplayRegistry.screens[packet.id]?.let { DisplayRegistry.unregisterScreen(it) }
         DisplayRegistry.unloadedScreens.remove(packet.id)
@@ -86,7 +82,6 @@ object ClientPacketManager {
         logger.info("Display deleted and removed from saved data: ${packet.id}.")
     }
 
-    /** Drops the listed displays from the registry (active or unloaded), display system, and saved data. */
     private fun handleClearCache(packet: ClearCache) {
         packet.ids.forEach { uuid ->
             DisplayRegistry.screens[uuid]?.let { DisplayRegistry.unregisterScreen(it) }

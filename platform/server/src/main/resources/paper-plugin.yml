@@ -3,6 +3,7 @@ version: '${version}'
 main: com.dreamdisplays.platform.server.PaperServer
 api-version: '${paperMinecraftApi}'
 description: 'Plugin for the Dream Displays mod.'
+website: 'https://github.com/arnodoelinger/dreamdisplays'
 authors:
   - arnodoelinger
   - INotSleep
@@ -12,6 +13,10 @@ folia-supported: true
 dependencies:
   server:
     LuckPerms:
+      load: BEFORE
+      required: false
+      join-classpath: true
+    WorldGuard:
       load: BEFORE
       required: false
       join-classpath: true
@@ -38,6 +43,8 @@ permissions:
     default: true
   dreamdisplays.delete:
     default: true
+  dreamdisplays.lock.bypass.worldguard:
+    default: op
   dreamdisplays.delete.others:
     default: op
   dreamdisplays.list:

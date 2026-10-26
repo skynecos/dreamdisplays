@@ -1,6 +1,6 @@
 package com.dreamdisplays.platform.client.audio
 
-import com.dreamdisplays.api.media.audio.model.ListenerPose
+import com.dreamdisplays.api.media.audio.ListenerPose
 import net.minecraft.client.Camera
 import net.minecraft.client.Minecraft
 import org.joml.Vector3f
@@ -25,7 +25,6 @@ internal object ListenerPoseTracker {
         )
     }
 
-    /** Resolves the main camera. */
     private fun mainCameraOf(minecraft: Minecraft): Camera {
         //? if >=26.2 {
         return minecraft.gameRenderer.mainCamera()

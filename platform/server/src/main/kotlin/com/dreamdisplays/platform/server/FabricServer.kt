@@ -1,13 +1,12 @@
 package com.dreamdisplays.platform.server
 
-import com.dreamdisplays.platform.client.net.Packets
+import com.dreamdisplays.platform.client.net.LegacyProbe
 import com.dreamdisplays.platform.client.net.ProxyPayload
 import com.dreamdisplays.platform.client.net.V2Payload
 import com.dreamdisplays.platform.server.listeners.FabricPlayerListener
 import com.dreamdisplays.platform.server.listeners.FabricProtectionListener
 import com.dreamdisplays.platform.server.listeners.FabricSelectionListener
 import com.dreamdisplays.platform.server.managers.StorageManager
-import com.dreamdisplays.platform.server.registrar.FabricBareTokenArgumentType
 import com.dreamdisplays.platform.server.registrar.FabricCommandRegistrar
 import com.dreamdisplays.platform.server.storage.StorageBackend
 import com.dreamdisplays.platform.server.utils.net.FabricNetworkingAdapter
@@ -31,12 +30,6 @@ import java.io.File
  */
 @FabricOnly
 class Server : ModInitializer {
-    /**
-     * Initializes the server-side mod. It registers all necessary event listeners, packet handlers, and commands.
-     * Also sets up repeating tasks for display updates and update checking.
-     *
-     * This method is called by the `Fabric` loader when the mod is loaded.
-     */
     override fun onInitialize() {
         logger.info("Initializing server-side mod...")
 
@@ -46,7 +39,6 @@ class Server : ModInitializer {
         VanillaServerState.platformName = "fabric"
         VanillaNetworking.adapter = FabricNetworkingAdapter
 
-        FabricBareTokenArgumentType.register()
         registerPayloadTypes()
 
         VanillaServerPacketHandler.registerReceivers()
@@ -76,33 +68,18 @@ class Server : ModInitializer {
         logger.info("Server-side initialization complete.")
     }
 
-    /** Registers all custom payload types for clientbound and serverbound play channels. */
     private fun registerPayloadTypes() {
         runCatching {
             payloadRegistry("clientboundPlay", "playS2C").let { clientbound ->
                 registerPayload(clientbound, V2Payload.TYPE, V2Payload.CODEC)
                 registerPayload(clientbound, ProxyPayload.TYPE, ProxyPayload.CODEC)
-                registerPayload(clientbound, Packets.Info.PACKET_ID, Packets.Info.PACKET_CODEC)
-                registerPayload(clientbound, Packets.Sync.PACKET_ID, Packets.Sync.PACKET_CODEC)
-                registerPayload(clientbound, Packets.Premium.PACKET_ID, Packets.Premium.PACKET_CODEC)
-                registerPayload(clientbound, Packets.IsAdmin.PACKET_ID, Packets.IsAdmin.PACKET_CODEC)
-                registerPayload(clientbound, Packets.Delete.PACKET_ID, Packets.Delete.PACKET_CODEC)
-                registerPayload(clientbound, Packets.DisplayEnabled.PACKET_ID, Packets.DisplayEnabled.PACKET_CODEC)
-                registerPayload(clientbound, Packets.ReportEnabled.PACKET_ID, Packets.ReportEnabled.PACKET_CODEC)
-                registerPayload(clientbound, Packets.ClearCache.PACKET_ID, Packets.ClearCache.PACKET_CODEC)
+                registerPayload(clientbound, LegacyProbe.Premium.PACKET_ID, LegacyProbe.Premium.PACKET_CODEC)
             }
 
             payloadRegistry("serverboundPlay", "playC2S").let { serverbound ->
                 registerPayload(serverbound, V2Payload.TYPE, V2Payload.CODEC)
                 registerPayload(serverbound, ProxyPayload.TYPE, ProxyPayload.CODEC)
-                registerPayload(serverbound, Packets.Sync.PACKET_ID, Packets.Sync.PACKET_CODEC)
-                registerPayload(serverbound, Packets.RequestSync.PACKET_ID, Packets.RequestSync.PACKET_CODEC)
-                registerPayload(serverbound, Packets.Delete.PACKET_ID, Packets.Delete.PACKET_CODEC)
-                registerPayload(serverbound, Packets.Report.PACKET_ID, Packets.Report.PACKET_CODEC)
-                registerPayload(serverbound, Packets.Version.PACKET_ID, Packets.Version.PACKET_CODEC)
-                registerPayload(serverbound, Packets.SetVideo.PACKET_ID, Packets.SetVideo.PACKET_CODEC)
-                registerPayload(serverbound, Packets.SetLocked.PACKET_ID, Packets.SetLocked.PACKET_CODEC)
-                registerPayload(serverbound, Packets.DisplayEnabled.PACKET_ID, Packets.DisplayEnabled.PACKET_CODEC)
+                registerPayload(serverbound, LegacyProbe.Version.PACKET_ID, LegacyProbe.Version.PACKET_CODEC)
             }
         }.onFailure { e ->
             logger.error("Failed to register payload types.", e)
@@ -127,7 +104,7 @@ class Server : ModInitializer {
 
     companion object {
         /** Logger. */
-        val logger = LoggerFactory.getLogger("DreamDisplays")
+        val logger = LoggerFactory.getLogger(javaClass)
 
         /** The mod version string, resolved from the `Fabric` mod container. */
         val serverVersion: String? by lazy {
@@ -147,9 +124,8 @@ class Server : ModInitializer {
         val server: MinecraftServer?; get() = VanillaServerState.server
         val storage: StorageManager?; get() = VanillaServerState.storage
 
-        /** Copies the pre-1.8.1 global `SQLite DB` into [worldDataDir] on first startup for this world. */
-        @Deprecated("Will be removed in 1.10.0")
-        // TODO: remove
+        @Deprecated("Scheduled for removal in 2.0.0")
+        // TODO: scheduled for removal in 2.0.0
         private fun migrateGlobalDb(worldDataDir: File) {
             val oldDb = FabricLoader.getInstance().configDir
                 .resolve("dreamdisplays").resolve("dreamdisplays.db").toFile()

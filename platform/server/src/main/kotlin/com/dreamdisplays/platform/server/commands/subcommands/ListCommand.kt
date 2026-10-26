@@ -7,6 +7,8 @@ import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
 import com.dreamdisplays.platform.server.datatypes.display.shortLabel
 import com.dreamdisplays.platform.server.managers.DisplayManager
 import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.mojang.brigadier.context.CommandContext
 import io.github.arnodoelinger.platformweaver.PaperOnly
 import net.kyori.adventure.text.Component.text
@@ -26,7 +28,6 @@ import kotlin.math.max
  * Handles the `/display list` command. Renders a paged, filterable listing of all registered
  * displays with teleport and URL buttons for in-game players.
  */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @PaperOnly
 class ListCommand : SubCommand {
     private companion object {
@@ -42,18 +43,17 @@ class ListCommand : SubCommand {
     override val name = "list"
     override val permission = PaperServer.config.permissions.list
 
-    /** Renders a paged, filterable listing of all displays, with `/tp` and URL buttons for players. */
     override fun execute(sender: CommandSender, args: Array<String?>) {
         val displays = sortedDisplays()
         if (displays.isEmpty()) {
-            MessageUtil.sendMessage(sender, "noDisplaysFound")
+            ServerMessage.NO_DISPLAYS_FOUND.sendTo(sender)
             return
         }
 
         val ownerNameCache = mutableMapOf<UUID, String?>()
         val query = parseQuery(sender, args, displays, ownerNameCache) ?: return
         if (query.displays.isEmpty()) {
-            MessageUtil.sendMessage(sender, "noDisplaysFound")
+            ServerMessage.NO_DISPLAYS_FOUND.sendTo(sender)
             return
         }
         val totalPages = pageCount(query.displays.size)
@@ -62,7 +62,7 @@ class ListCommand : SubCommand {
         val endExclusive = minOf(startIndex + PAGE_SIZE, query.displays.size)
         val pageDisplays = query.displays.subList(startIndex, endExclusive)
 
-        MessageUtil.sendMessage(sender, "displayListHeader")
+        ServerMessage.DISPLAY_LIST_HEADER.sendTo(sender)
         MessageUtil.sendColoredMessage(
             sender,
             MessageUtil.formatIndexed(
@@ -77,10 +77,10 @@ class ListCommand : SubCommand {
         pageDisplays.forEachIndexed { localIndex, d ->
             val index = startIndex + localIndex + 1
             val owner =
-                getOwnerName(d.ownerId, ownerNameCache) ?: MessageUtil.messageFor(sender, "displayListUnknownOwner")
-            val worldName = d.pos1.world?.name ?: MessageUtil.messageFor(sender, "displayListUnknownWorld")
+                getOwnerName(d.ownerId, ownerNameCache) ?: MessageUtil.messageFor(sender, ServerMessage.DISPLAY_LIST_UNKNOWN_OWNER)
+            val worldName = d.pos1.world?.name ?: MessageUtil.messageFor(sender, ServerMessage.DISPLAY_LIST_UNKNOWN_WORLD)
             val idShort = d.shortLabel
-            val url = d.url.ifBlank { MessageUtil.messageFor(sender, "displayListUnavailableUrl") }
+            val url = d.url.ifBlank { MessageUtil.messageFor(sender, ServerMessage.DISPLAY_LIST_UNAVAILABLE_URL) }
             val baseLine = MessageUtil.formatIndexed(
                 sender,
                 "displayListEntry",
@@ -109,7 +109,7 @@ class ListCommand : SubCommand {
 
             val component = LEGACY_SERIALIZER.deserialize(fullLine)
                 .append(
-                    text(MessageUtil.messageFor(sender, "displayListTpButton"))
+                    text(MessageUtil.messageFor(sender, ServerMessage.DISPLAY_LIST_TP_BUTTON))
                         .color(NamedTextColor.GREEN)
                         .clickEvent(
                             ClickEvent.runCommand(
@@ -122,7 +122,7 @@ class ListCommand : SubCommand {
                 component
             } else {
                 component.append(
-                    text(MessageUtil.messageFor(sender, "displayListUrlButton")).color(NamedTextColor.RED)
+                    text(MessageUtil.messageFor(sender, ServerMessage.DISPLAY_LIST_URL_BUTTON)).color(NamedTextColor.RED)
                         .clickEvent(ClickEvent.openUrl(d.url))
                 )
             }
@@ -131,7 +131,6 @@ class ListCommand : SubCommand {
         }
     }
 
-    /** Builds tab-completion suggestions for each positional argument (filter keyword, value, page). */
     override fun complete(sender: CommandSender, args: Array<String?>): List<String> {
         val displays = sortedDisplays()
         val ownerNameCache = mutableMapOf<UUID, String?>()
@@ -145,7 +144,7 @@ class ListCommand : SubCommand {
             3 -> when (ListFilter.fromToken(args[1])) {
                 ListFilter.MINE -> {
                     if (sender !is Player) {
-                        emptyList()
+                        []
                     } else {
                         pageSuggestions(displays.count { it.ownerId == sender.uniqueId })
                     }
@@ -162,20 +161,19 @@ class ListCommand : SubCommand {
                     .distinct()
                     .sorted()
 
-                else -> emptyList()
+                else -> []
             }
 
             4 -> when (ListFilter.fromToken(args[1])) {
                 ListFilter.WORLD -> pageSuggestions(filterByWorld(displays, args[2].orEmpty()).size)
                 ListFilter.OWNER -> pageSuggestions(filterByOwner(displays, args[2].orEmpty(), ownerNameCache).size)
-                else -> emptyList()
+                else -> []
             }
 
-            else -> emptyList()
+            else -> []
         }
     }
 
-    /** Parses [args] into a filtered + paginated [ListQuery], or null when arguments are invalid. */
     private fun parseQuery(
         sender: CommandSender,
         args: Array<String?>,
@@ -194,7 +192,7 @@ class ListCommand : SubCommand {
         return when (ListFilter.fromToken(selector)) {
             ListFilter.MINE -> {
                 if (sender !is Player) {
-                    MessageUtil.sendMessage(sender, "commandPlayersOnly")
+                    ServerMessage.COMMAND_PLAYERS_ONLY.sendTo(sender)
                     return null
                 }
                 if (args.size !in 2..3) return wrong(sender)
@@ -226,23 +224,20 @@ class ListCommand : SubCommand {
         }
     }
 
-    /** Parses an optional page argument, defaulting to 1 when absent; sends an error when malformed. */
     private fun parseOptionalPage(sender: CommandSender, rawPage: String?): Int? {
         if (rawPage == null) return 1
         val page = rawPage.toIntOrNull()
         if (page == null) {
-            MessageUtil.sendMessage(sender, "displayWrongCommand")
+            ServerMessage.DISPLAY_WRONG_COMMAND.sendTo(sender)
             return null
         }
         return page
     }
 
-    /** Returns displays whose world name matches [worldName] case-insensitively. */
     private fun filterByWorld(displays: List<PaperDisplayData>, worldName: String): List<PaperDisplayData> {
         return displays.filter { it.pos1.world?.name?.equals(worldName, ignoreCase = true) == true }
     }
 
-    /** Returns displays whose owner name or UUID matches [ownerName] case-insensitively. */
     private fun filterByOwner(
         displays: List<PaperDisplayData>,
         ownerName: String,
@@ -254,12 +249,10 @@ class ListCommand : SubCommand {
         }
     }
 
-    /** Resolves the offline player name for [ownerId], caching the result for this invocation. */
     private fun getOwnerName(ownerId: UUID, ownerNameCache: MutableMap<UUID, String?>): String? {
         return ownerNameCache.getOrPut(ownerId) { Bukkit.getOfflinePlayer(ownerId).name }
     }
 
-    /** Returns all displays sorted by world, X, Y, Z, and UUID for deterministic page order. */
     private fun sortedDisplays(): List<PaperDisplayData> {
         return DisplayManager.getDisplays()
             .filterIsInstance<PaperDisplayData>()
@@ -274,23 +267,17 @@ class ListCommand : SubCommand {
             )
     }
 
-    /** Returns the ceiling page count for [size] items at [PAGE_SIZE] per page (at least 1). */
     private fun pageCount(size: Int): Int = max(1, (size + PAGE_SIZE - 1) / PAGE_SIZE)
 
-    /** Returns page numbers `1..pageCount(size)` as strings for tab-completion. */
     private fun pageSuggestions(size: Int): List<String> = (1..pageCount(size)).map { it.toString() }
 
-    /** Sends the generic "wrong command" message and returns null so callers can short-circuit. */
     private fun wrong(sender: CommandSender): ListQuery? {
-        MessageUtil.sendMessage(sender, "displayWrongCommand")
+        ServerMessage.DISPLAY_WRONG_COMMAND.sendTo(sender)
         return null
     }
 }
 
-/**
- * Shared `Fabric` / `NeoForge` implementation of the `/display list` command.
- */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
+/** Shared `Fabric` / `NeoForge` implementation of the `/display list` command. */
 @ModLoaderOnly
 object VanillaListCommand {
     private const val PAGE_SIZE = 10
@@ -354,7 +341,6 @@ object VanillaListCommand {
         return 1
     }
 
-    /** Renders a single page of [displays] to the command source, substituting owner names and localized strings. */
     private fun sendPage(
         ctx: CommandContext<CommandSourceStack>,
         player: ServerPlayer?,
@@ -389,10 +375,10 @@ object VanillaListCommand {
 
         pageDisplays.forEachIndexed { localIndex, d ->
             val index = startIndex + localIndex + 1
-            val owner = getOwnerName(d.ownerId) ?: MessageUtil.messageFor(player, "displayListUnknownOwner")
+            val owner = getOwnerName(d.ownerId) ?: MessageUtil.messageFor(player, ServerMessage.DISPLAY_LIST_UNKNOWN_OWNER)
             val worldName = d.worldKey.substringAfterLast(':')
             val idShort = d.shortLabel
-            val url = d.url.ifBlank { MessageUtil.messageFor(player, "displayListUnavailableUrl") }
+            val url = d.url.ifBlank { MessageUtil.messageFor(player, ServerMessage.DISPLAY_LIST_UNAVAILABLE_URL) }
             val baseLine = MessageUtil.formatIndexed(
                 player,
                 "displayListEntry",
@@ -416,7 +402,6 @@ object VanillaListCommand {
         }
     }
 
-    /** Returns all `Fabric`/`NeoForge` displays sorted by world key, X, Y, Z, and UUID for deterministic page order. */
     private fun sortedDisplays(): List<VanillaDisplayData> =
         DisplayManager.getDisplays().filterIsInstance<VanillaDisplayData>().sortedWith(
             compareBy(
@@ -428,7 +413,6 @@ object VanillaListCommand {
             )
         )
 
-    /** Sends the localized message for [key] to [player] or falls back to the command source. */
     private fun sendMsg(ctx: CommandContext<CommandSourceStack>, player: ServerPlayer?, key: String) {
         val msg = MessageUtil.messageFor(player, key)
         if (player != null) {
@@ -438,7 +422,6 @@ object VanillaListCommand {
         }
     }
 
-    /** Sends a color-formatted [msg] to [player] or falls back to the command source as plain text. */
     private fun sendColoredMsg(ctx: CommandContext<CommandSourceStack>, player: ServerPlayer?, msg: String) {
         if (player != null) {
             MessageUtil.sendColoredMessage(player, msg)

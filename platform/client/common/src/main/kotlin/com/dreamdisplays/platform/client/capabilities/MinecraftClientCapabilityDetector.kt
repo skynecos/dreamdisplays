@@ -1,9 +1,9 @@
 package com.dreamdisplays.platform.client.capabilities
 
-import com.dreamdisplays.api.media.stream.model.SupportedCodec
-import com.dreamdisplays.api.render.backend.model.RenderBackend
-import com.dreamdisplays.api.render.backend.model.ShaderBackend
-import com.dreamdisplays.api.render.texture.model.TextureUploadPath
+import com.dreamdisplays.api.media.stream.SupportedCodec
+import com.dreamdisplays.core.render.RenderBackend
+import com.dreamdisplays.core.render.ShaderBackend
+import com.dreamdisplays.core.render.TextureUploadPath
 import com.dreamdisplays.core.protocol.common.packets.ClientHello
 import com.dreamdisplays.media.player.nativebridge.NativeMedia
 import com.dreamdisplays.media.player.process.HwAccelBackend
@@ -15,29 +15,27 @@ import com.dreamdisplays.platform.client.ui.VideoPopoutWindow
 import java.time.Instant
 import java.time.ZoneId
 
+private const val PROBING = "probing"
+
 /**
  * Probes the running client for [ClientHello] capabilities. Popout support comes from the `GLFW`
  * shared-context check in [VideoPopoutWindow], hardware decode from the per-OS
  * [HwAccelBackend] default, and codec support from what the `FFmpeg` pipeline decodes.
  */
 object MinecraftClientCapabilityDetector : ClientCapabilityDetector {
-    /** Matches [AsyncTextureUploader]; a GL query needs a current context, which detect-time can't guarantee. */
     override val maxTextureSize: Int = 8192
 
-    /** True when `GLFW` can create the shared-context popout window on this platform. */
     override val supportsPopout: Boolean get() = VideoPopoutWindow.isAvailable
 
-    /** True when the host OS has a known `FFmpeg` hwaccel backend. */
     override val supportsHardwareDecode: Boolean get() = HwAccelBackend.detectDefault() != HwAccelBackend.NONE
 
-    /** Codecs the `FFmpeg` decode pipeline accepts regardless of hwaccel availability. */
     override val supportedCodecs: List<SupportedCodec> = SupportedCodec.advertised
 
-    /** Snapshots all probes into an immutable [ClientHello] for the handshake. */
     override fun detect(): ClientHello {
         val hwAccel = HwAccelBackend.detectDefault()
-        val nativeAvailable = safeBool { NativeMedia.isAvailable }
-        val lavAvailable = safeBool { NativeMedia.lavAvailable }
+        val probed = safeBool { NativeMedia.probesFinished }
+        val nativeAvailable = probed && safeBool { NativeMedia.isAvailable }
+        val lavAvailable = probed && safeBool { NativeMedia.lavAvailable }
         val memory = ClientMemoryProbe.detected
         return ClientHello(
             supportsPopout = supportsPopout,
@@ -58,8 +56,16 @@ object MinecraftClientCapabilityDetector : ClientCapabilityDetector {
             lavInProcessEnabled = lavAvailable && safeBool { NativeMedia.lavInProcessEnabled },
             lavSurfaceInteropAvailable = lavAvailable && safeBool { NativeMedia.lavSurfaceInteropAvailable },
             lavZeroCopyEnabled = lavAvailable && safeBool { NativeMedia.lavZeroCopyEnabled },
-            nativeUnavailableReason = if (nativeAvailable) "" else safeString("unknown") { NativeMedia.unavailableReason.ifBlank { "unknown" } },
-            lavUnavailableReason = if (lavAvailable) "" else safeString("unknown") { NativeMedia.lavUnavailableReason.ifBlank { "unknown" } },
+            nativeUnavailableReason = when {
+                nativeAvailable -> ""
+                !probed -> PROBING
+                else -> safeString("unknown") { NativeMedia.unavailableReason.ifBlank { "unknown" } }
+            },
+            lavUnavailableReason = when {
+                lavAvailable -> ""
+                !probed -> PROBING
+                else -> safeString("unknown") { NativeMedia.lavUnavailableReason.ifBlank { "unknown" } }
+            },
             systemRamMb = memory.systemRamMb,
             maxJvmMemoryMb = memory.maxJvmMemoryMb,
             dedicatedVramMb = memory.dedicatedVramMb,
@@ -68,13 +74,10 @@ object MinecraftClientCapabilityDetector : ClientCapabilityDetector {
         )
     }
 
-    /** Runs [block] and returns `0` on any exception. */
     private fun safeInt(block: () -> Int): Int = runCatching(block).getOrDefault(0)
 
-    /** Runs [block] and returns `false` on any exception. */
     private fun safeBool(block: () -> Boolean): Boolean = runCatching(block).getOrDefault(false)
 
-    /** Runs [block] and returns the empty string on any exception. */
     private fun safeString(default: String, block: () -> String): String =
         runCatching(block).getOrDefault(default).ifBlank { default }
 }

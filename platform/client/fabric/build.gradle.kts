@@ -34,6 +34,14 @@ repositories {
     maven("https://oss.sonatype.org/content/groups/public/")
     maven("https://jitpack.io")
     maven("https://maven.neoforged.net/releases")
+    maven("https://prmaven.neoforged.net/NeoForge/pr3403")
+    maven("https://maven.enginehub.org/repo/")
+    maven("https://maven.shedaniel.me/") {
+        content { includeGroup("me.shedaniel.cloth") }
+    }
+    maven("https://api.modrinth.com/maven") {
+        content { includeGroup("maven.modrinth") }
+    }
 }
 
 val scVersions = gradle.extensions.getByType<StonecutterVersions>()
@@ -43,6 +51,10 @@ fun scVersion(name: String): String = scVersions.get(name)
 // Legacy (obfuscated) Minecraft targets need layered Mojang+Parchment mappings and modImplementation;
 // year-versioned (deobfuscated) targets resolve the source set directly with plain implementation.
 val isLegacyObfuscated = scVersion("minecraft.version").startsWith("1.")
+
+// The rendertype package only exists from 1.21.11
+val hasRenderTypePackage = (scVersion("minecraft.version").split(".").map { it.toIntOrNull() ?: 0 } + listOf(0, 0, 0))
+    .let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch >= 1_021_011 }
 
 fun fancyModLoaderVersion(neoForgeVersion: String): String = when (neoForgeVersion) {
     "21.1.233" -> "4.0.42"
@@ -77,9 +89,11 @@ val sourceClassTweaker = project(":platform:client:common").file("src/main/resou
 val classTweakerNamespace = if (isLegacyObfuscated) "named" else "official"
 val generatedClassTweaker = layout.buildDirectory.file("generated/classtweaker/dreamdisplays.classtweaker").get().asFile
 run {
-    val rewritten = sourceClassTweaker.readText().lineSequence().joinToString("\n") { line ->
-        if (line.startsWith("classTweaker v1 ")) "classTweaker v1 $classTweakerNamespace" else line
-    }
+    val rewritten = sourceClassTweaker.readText().lineSequence()
+        .filter { hasRenderTypePackage || "net/minecraft/client/renderer/rendertype/" !in it }
+        .joinToString("\n") { line ->
+            if (line.startsWith("classTweaker v1 ")) "classTweaker v1 $classTweakerNamespace" else line
+        }
     if (!generatedClassTweaker.exists() || generatedClassTweaker.readText() != rewritten) {
         generatedClassTweaker.parentFile.mkdirs()
         generatedClassTweaker.writeText(rewritten)
@@ -104,9 +118,20 @@ configurations.register("mappedFabricApiElements") {
     extendsFrom(configurations.getByName("modCompileClasspathMapped"))
 }
 
+val isolatedSqliteJdbc = configurations.register("isolatedSqliteJdbc") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
 dependencies {
     compileOnly(libs.platformweaverAnnotations)
     compileOnly(libs.luckpermsApi)
+    compileOnly(libs.worldguardApi) {
+        exclude(group = "com.google.guava", module = "guava")
+        exclude(group = "com.google.code.gson", module = "gson")
+        exclude(group = "it.unimi.dsi", module = "fastutil")
+    }
     compileOnly("io.papermc.paper:paper-api:${scVersion("paper.api.version")}")
     compileOnly("net.neoforged:neoforge:${scVersion("neoforge.version")}:universal")
     compileOnly("net.neoforged:bus:8.0.5")
@@ -133,13 +158,21 @@ dependencies {
         })
         "modImplementation"("net.fabricmc:fabric-loader:${scVersion("fabric.loader.version")}")
         "modImplementation"("net.fabricmc.fabric-api:fabric-api:${scVersion("fabric.api.version")}")
+        "modCompileOnly"("maven.modrinth:modmenu:${scVersion("modmenu.version")}")
+        "modLocalRuntime"("maven.modrinth:modmenu:${scVersion("modmenu.version")}")
+        "modLocalRuntime"("maven.modrinth:cloth-config:${scVersion("cloth.config.version")}+fabric")
     } else {
+        compileOnly("maven.modrinth:modmenu:${scVersion("modmenu.version")}")
+        "localRuntime"("maven.modrinth:modmenu:${scVersion("modmenu.version")}")
+        "localRuntime"("maven.modrinth:cloth-config:${scVersion("cloth.config.version")}+fabric")
         implementation("net.fabricmc:fabric-loader:${scVersion("fabric.loader.version")}")
         implementation("net.fabricmc.fabric-api:fabric-api:${scVersion("fabric.api.version")}")
     }
+    "localRuntime"("me.shedaniel.cloth:basic-math:0.6.1")
     implementation(project(":platform:client:common"))
     shadow(project(":core"))
     shadow(project(":api"))
+    shadow(project(":shared"))
     shadow(project(":util"))
     shadow(project(":media:runtime"))
     shadow(project(":media:source"))
@@ -154,7 +187,7 @@ dependencies {
     shadow(libs.caffeine)
     shadow(libs.okhttp)
     shadow(libs.okio)
-    shadow(libs.sqliteJdbc)
+    isolatedSqliteJdbc(libs.sqliteJdbc)
     shadow(libs.exposedCore)
     shadow(libs.exposedJdbc)
     shadow(libs.exposedMigrationJdbc)
@@ -170,17 +203,17 @@ tasks.processResources {
     val projectVersion = project.version.toString()
     val fabricMcVer = scVersion("fabric.minecraft.dependency")
     val javaVersion = scVersion("java.version")
+    val stripOitMixin = !hasRenderTypePackage
     inputs.property("version", projectVersion)
     inputs.property("minecraftVersion", fabricMcVer)
     inputs.property("javaVersion", javaVersion)
+    inputs.property("stripOitMixin", stripOitMixin)
     filesMatching("fabric.mod.json") {
-        expand(mapOf("version" to projectVersion, "minecraftVersion" to fabricMcVer, "javaVersion" to javaVersion))
-    }
-    filesMatching("quilt.mod.json") {
         expand(mapOf("version" to projectVersion, "minecraftVersion" to fabricMcVer, "javaVersion" to javaVersion))
     }
     filesMatching(listOf("dreamdisplays.mixins.json", "dreamdisplays.server.mixins.json")) {
         expand(mapOf("javaVersion" to javaVersion))
+        if (stripOitMixin) filter { line -> if ("\"DisplayOitPhase\"" in line) "" else line }
     }
     filesMatching("assets/dreamdisplays/version.txt") {
         expand(mapOf("version" to projectVersion))
@@ -196,6 +229,13 @@ java {
 // TODO: when a stable Loom for 26.1.2/26.2 is released, this should be removed
 tasks.findByName("validateAccessWidener")?.enabled = false
 
+val trimmedSqliteJdbc = tasks.register<Zip>("trimmedSqliteJdbc") {
+    from(isolatedSqliteJdbc.map { configuration -> configuration.map { zipTree(it) } })
+    excludeDreamDisplaysSqliteNativeExtras()
+    archiveFileName.set("sqlite-jdbc.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("generated/isolatedSqliteJdbc"))
+}
+
 tasks.shadowJar {
     configurations = listOf(project.configurations.getByName("shadow"))
     archiveBaseName.set("dreamdisplays-fabric")
@@ -206,7 +246,9 @@ tasks.shadowJar {
     }
     includeDreamDisplaysSharedContents()
     relocateDreamDisplaysSharedPackages()
-    excludeDreamDisplaysSqliteNativeExtras()
+    from(trimmedSqliteJdbc) {
+        into("META-INF/dreamdisplays")
+    }
 }
 
 // If it's a legacy version (like 1.21.11 where the shadow jar is obfuscated), we need to remap the shadow jar with

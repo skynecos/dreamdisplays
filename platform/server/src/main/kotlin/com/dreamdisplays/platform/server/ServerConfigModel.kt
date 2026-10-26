@@ -1,6 +1,8 @@
 package com.dreamdisplays.platform.server
 
 import com.dreamdisplays.platform.server.storage.StorageBackend
+import com.dreamdisplays.shared.playback.FullscreenMode
+import com.dreamdisplays.shared.policy.CustomMediaPolicy
 import com.dreamdisplays.util.asJsonObjectOrNull
 import com.dreamdisplays.util.json.DreamJson
 import com.dreamdisplays.util.toPlainJsonValue
@@ -10,12 +12,6 @@ import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-
-/**
- * `config.toml` shape shared by every server platform (`Paper`, Fabric, NeoForge). [Config] and
- * [VanillaConfig] each own only the platform-specific I / O (resource lookup, data directory,
- * `Material` resolution) and delegate parsing/language-loading here so the two never drift.
- */
 
 /** Language section of the config. */
 data class LanguageSection(
@@ -43,6 +39,9 @@ data class SettingsSection(
     val particlesEnabled get() = display.particles
     val particleRenderDelay = 2
 
+    val particleColorRgb: Int
+        get() = display.particles_color.trim().removePrefix("#").takeIf { it.length == 6 }?.toIntOrNull(16) ?: 0x00FFFF
+
     // Mod detection
     val modDetectionEnabled get() = display.mod_detection_enabled
 
@@ -51,17 +50,16 @@ data class SettingsSection(
     val minHeight get() = display.min_height
     val maxWidth get() = display.max_width
     val maxHeight get() = display.max_height
-    val maxRenderDistance get() = display.max_render_distance
 
     /** Max displays one player may own at once; `0` or less means no limit. Bypassed by [PermissionsSection.createBypass]. */
     val maxDisplaysPerPlayer get() = display.max_displays_per_player
 
-    /** Volume in [0, 1] ready for the wire; config stores 0-100 percent. */
-    val defaultVolume get() = display.default_volume / 100f
+    /** Volume in [0, 1] ready for the wire. */
+    val defaultVolume get() = display.default_volume / 200f
 
     // Custom media (player-pasted links)
-    val customMediaPolicy: com.dreamdisplays.api.security.policy.CustomMediaPolicy.Settings
-        get() = com.dreamdisplays.api.security.policy.CustomMediaPolicy.Settings(
+    val customMediaPolicy: CustomMediaPolicy.Settings
+        get() = CustomMediaPolicy.Settings(
             enabled = customMedia.enabled,
             allowedHosts = customMedia.allowed_hosts,
             blockedHosts = customMedia.blocked_hosts,
@@ -70,9 +68,9 @@ data class SettingsSection(
     // Fullscreen broadcasts
     val fullscreenAllowForced get() = fullscreen.allow_forced
     val fullscreenQualityCap get() = fullscreen.quality_cap
-    val fullscreenDefaultMode: com.dreamdisplays.api.playback.model.FullscreenMode
-        get() = runCatching { com.dreamdisplays.api.playback.model.FullscreenMode.valueOf(fullscreen.default_mode.uppercase()) }
-            .getOrDefault(com.dreamdisplays.api.playback.model.FullscreenMode.STANDARD)
+    val fullscreenDefaultMode: FullscreenMode
+        get() = runCatching { FullscreenMode.valueOf(fullscreen.default_mode.uppercase()) }
+            .getOrDefault(FullscreenMode.STANDARD)
 
     /** Reports section. */
     data class ReportsConfig(
@@ -100,7 +98,6 @@ data class SettingsSection(
         val min_height: Int = 1,
         val max_width: Int = 32,
         val max_height: Int = 24,
-        val max_render_distance: Double = 96.0,
         val default_volume: Int = 50,
         val max_displays_per_player: Int = 100,
     )
@@ -112,8 +109,8 @@ data class SettingsSection(
      */
     data class CustomMediaConfig(
         val enabled: Boolean = true,
-        val allowed_hosts: List<String> = emptyList(),
-        val blocked_hosts: List<String> = emptyList(),
+        val allowed_hosts: List<String> = [],
+        val blocked_hosts: List<String> = [],
     )
 
     /** Fullscreen broadcast section. */
@@ -259,8 +256,7 @@ fun parseServerConfig(t: TomlTable?): ParsedServerConfig = ParsedServerConfig(
             min_height = t?.getLong("display.min_height")?.toInt() ?: 1,
             max_width = t?.getLong("display.max_width")?.toInt() ?: 32,
             max_height = t?.getLong("display.max_height")?.toInt() ?: 24,
-            max_render_distance = t?.getDouble("display.max_render_distance") ?: 96.0,
-            default_volume = t?.getLong("display.default_volume")?.toInt()?.coerceIn(0, 100) ?: 50,
+            default_volume = t.intOr("display.default_volume", 50).coerceIn(0, 200),
             max_displays_per_player = t?.getLong("display.max_displays_per_player")?.toInt() ?: 100,
         ),
         customMedia = SettingsSection.CustomMediaConfig(
@@ -324,24 +320,27 @@ fun parseServerConfig(t: TomlTable?): ParsedServerConfig = ParsedServerConfig(
     ),
 )
 
-/**
- * Reads [key] as a TOML array of strings, dropping blanks and non-string entries. Returns an empty
- * list when the key is absent or is not an array, so a malformed rule never turns into a
- * silently-empty allowlist that would block every custom link.
- */
+private fun TomlTable?.intOr(key: String, default: Int): Int {
+    val table = this ?: return default
+    table.getLong(key)?.toInt()?.let { return it }
+    table.getDouble(key)?.toInt()?.let { return it }
+    return default
+}
+
 private fun stringList(t: TomlTable?, key: String): List<String> =
     t?.getArrayOrEmpty(key)
         ?.toList()
         ?.filterIsInstance<String>()
         ?.map { it.trim() }
         ?.filter { it.isNotEmpty() }
-        ?: emptyList()
+        ?: []
 
 /** Language files bundled with every server platform's JAR. */
-internal val LANGUAGE_FILES = listOf(
+internal val LANGUAGE_FILES = [
     "en.json", "es.json", "fr.json", "it.json", "pl.json",
     "ru.json", "uk.json", "de.json", "cs.json", "be.json", "he.json",
-)
+    "zh.json",
+]
 
 /** Maps a Minecraft locale string (e.g. `ru_ru`, `ru-ru`) to the plugin's short language code (e.g. `ru`). */
 internal fun mapLocaleToLang(locale: String): String {
@@ -353,12 +352,15 @@ internal fun mapLocaleToLang(locale: String): String {
         "cs_cz", "cs-cz" -> "cs"
         "be_by", "be-by" -> "be"
         "he_il", "he-il" -> "he"
+        "zh_cn", "zh-cn" -> "zh"
         else -> normalized.substringBefore('_').substringBefore('-').ifEmpty { "en" }
     }
 }
 
-private fun loadLanguageMessages(file: File): Map<String, Any> {
-    val root = DreamJson.compact.parseToJsonElement(file.readText()).asJsonObjectOrNull()
+private fun loadLanguageMessages(file: File): Map<String, Any> = parseLanguageMessages(file.readText())
+
+private fun parseLanguageMessages(text: String): Map<String, Any> {
+    val root = DreamJson.compact.parseToJsonElement(text).asJsonObjectOrNull()
         ?: error("Language file root must be a JSON object.")
     return root.mapNotNull { (key, value) ->
         value.toPlainJsonValue()?.let { key to it }
@@ -400,21 +402,29 @@ internal class LanguageStore(
         }
     }
 
+    private fun bundledMessages(fileName: String): Map<String, Any> = runCatching {
+        val resource = resourceLookup("assets/dreamdisplays/lang/server/$fileName")
+            ?: resourceLookup("assets/dreamdisplays/lang/$fileName")
+        resource?.use { parseLanguageMessages(it.readBytes().decodeToString()) }
+    }.getOrNull() ?: emptyMap()
+
     private fun isValidLangFile(file: File): Boolean =
         runCatching { loadLanguageMessages(file) }.isSuccess
 
-    /** Parses every language JSON in [dataDir]/lang into [languages] and reseeds the English fallback map. */
     fun loadMessages(logger: Logger) {
         languages.clear()
         LANGUAGE_FILES.forEach { fileName ->
             val langCode = fileName.removeSuffix(".json")
             val langFile = File(dataDir, "lang/$fileName")
+            val bundled = bundledMessages(fileName)
             if (langFile.exists()) {
                 runCatching {
-                    languages[langCode] = loadLanguageMessages(langFile)
+                    languages[langCode] = bundled + loadLanguageMessages(langFile)
                 }.onFailure {
                     logger.error("Error loading language file: $fileName.", it)
                 }
+            } else if (bundled.isNotEmpty()) {
+                languages[langCode] = bundled
             }
         }
         messages.clear()

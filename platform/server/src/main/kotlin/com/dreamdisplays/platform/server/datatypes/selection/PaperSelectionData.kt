@@ -10,6 +10,7 @@ import org.bukkit.entity.Player
 import org.jspecify.annotations.NullMarked
 import java.util.*
 import java.util.UUID.randomUUID
+import kotlin.math.abs
 
 /**
  * Player's current selection for a feature display.
@@ -23,13 +24,12 @@ class PaperSelectionData(player: Player) : BaseSelectionData() {
     /** Opposite corner of the selected area. */
     var pos2: Location? = null
 
-    /** Block face the player is facing at first-point time; orients wall content. */
     private var face: BlockFace? = null
-
-    /** Player's horizontal look cardinal at first-point time; orients floor / ceiling content. */
     private var horizontal: BlockFace = BlockFace.NORTH
 
-    /** Unique identifier for the player making the selection. */
+    /** True when the selection contains slabs or stairs and the screen should wrap them. */
+    var conforming: Boolean = false
+
     private val playerId: UUID = player.uniqueId
 
     /** Sets the facing direction of the future display. */
@@ -45,12 +45,12 @@ class PaperSelectionData(player: Player) : BaseSelectionData() {
     /** Returns the stored facing direction, or [NORTH] if none was set. */
     fun getFace(): BlockFace = face ?: BlockFace.NORTH
 
-    /** Resets the selection state. */
     override fun reset() {
         pos1 = null
         pos2 = null
         isReady = false
         face = null
+        conforming = false
     }
 
     /**
@@ -74,14 +74,15 @@ class PaperSelectionData(player: Player) : BaseSelectionData() {
          * This affects how we calculate the width and height of the display.
          */
         val isVertical = f == BlockFace.UP || f == BlockFace.DOWN
-        val screenWidth = region.screenWidth(isVertical)
-        val screenHeight = region.screenHeight(isVertical)
+        val (screenWidth, screenHeight, _) = region.screenExtents(abs(f.modX), abs(f.modY), abs(f.modZ))
         val rotation = if (isVertical) horizontal.toCardinal().toContentRotation() else DisplayRotation.NONE
 
-        return PaperDisplayData(randomUUID(), playerId, dPos1, dPos2, screenWidth, screenHeight, f, rotation)
+        return PaperDisplayData(
+            randomUUID(), playerId, dPos1, dPos2, screenWidth, screenHeight, f, rotation,
+            conforming = conforming,
+        )
     }
 
-    /** Maps this face to the shared horizontal [Cardinal], defaulting to [Cardinal.NORTH]. */
     private fun BlockFace.toCardinal(): Cardinal = when (this) {
         BlockFace.NORTH -> Cardinal.NORTH
         BlockFace.EAST -> Cardinal.EAST

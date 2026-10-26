@@ -3,8 +3,8 @@ package com.dreamdisplays.platform.server.commands.subcommands
 import com.dreamdisplays.platform.server.ModLoaderOnly
 import com.dreamdisplays.platform.server.PaperServer
 import com.dreamdisplays.platform.server.VanillaServerState
-import com.dreamdisplays.platform.server.media.LocalMediaServer
-import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.mojang.brigadier.context.CommandContext
 import io.github.arnodoelinger.platformweaver.PaperOnly
 import net.minecraft.commands.CommandSourceStack
@@ -21,20 +21,14 @@ class ReloadCommand : SubCommand {
     override val name = "reload"
     override val permission = PaperServer.config.permissions.reload
 
-    /** Reloads `config.yml` from disk; replies with success or failure message. */
     override fun execute(sender: CommandSender, args: Array<String?>) =
-        runCatching {
-            PaperServer.config.reload()
-            check(LocalMediaServer.reload(PaperServer.getInstance())) {
-                "Local media server could not be restarted."
-            }
-        }.fold(
+        runCatching { PaperServer.config.reload() }.fold(
             onSuccess = {
-                MessageUtil.sendMessage(sender, "configReloaded")
-                MessageUtil.sendMessage(sender, "configReloadSummary")
+                ServerMessage.CONFIG_RELOADED.sendTo(sender)
+                ServerMessage.CONFIG_RELOAD_SUMMARY.sendTo(sender)
             },
             onFailure = {
-                MessageUtil.sendMessage(sender, "configReloadFailed")
+                ServerMessage.CONFIG_RELOAD_FAILED.sendTo(sender)
             }
         )
 }
@@ -50,13 +44,13 @@ object VanillaReloadCommand {
         runCatching { VanillaServerState.config.reload() }.fold(
             onSuccess = {
                 player?.let {
-                    MessageUtil.sendMessage(it, "configReloaded")
-                    MessageUtil.sendMessage(it, "configReloadSummary")
+                    ServerMessage.CONFIG_RELOADED.sendTo(it)
+                    ServerMessage.CONFIG_RELOAD_SUMMARY.sendTo(it)
                 } ?: ctx.source.sendSystemMessage(Component.literal("Dream Displays config reloaded."))
             },
             onFailure = { e ->
                 player?.let {
-                    MessageUtil.sendMessage(it, "configReloadFailed")
+                    ServerMessage.CONFIG_RELOAD_FAILED.sendTo(it)
                 } ?: ctx.source.sendFailure(Component.literal("Failed to reload config: ${e.message}"))
             }
         )

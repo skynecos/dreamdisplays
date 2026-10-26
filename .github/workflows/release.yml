@@ -78,7 +78,7 @@ jobs:
               lines.append(f"## {header.strip()}")
 
               for item in body.splitlines():
-                  item = item.strip()
+                  item = item.rstrip()
                   if item:
                       lines.append(item)
 
@@ -140,7 +140,7 @@ jobs:
           import os
 
           paper_1_21 = ["1.21"] + [f"1.21.{p}" for p in range(1, 12)]
-          paper_26 = ["26.1", "26.1.1", "26.1.2", "26.2"]
+          paper_26 = ["26.1", "26.1.1", "26.1.2", "26.2", "26.3"]
           paper_versions = paper_1_21 + paper_26
 
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
@@ -188,7 +188,7 @@ jobs:
               lines.append(f"## {header.strip()}")
 
               for item in body.splitlines():
-                  item = item.strip()
+                  item = item.rstrip()
                   if item:
                       lines.append(item)
 
@@ -214,6 +214,8 @@ jobs:
           loaders: bungeecord
           game-versions: ${{ steps.versions.outputs.paper_versions }}
           game-version-filter: none
+          dependencies: |
+            luckperms(optional){modrinth:Vebnzrzj}
 
       - name: Publish Velocity to Modrinth
         if: needs.build.outputs.is_marketplace_publishable == 'true'
@@ -229,6 +231,8 @@ jobs:
           loaders: velocity
           game-versions: ${{ steps.versions.outputs.paper_versions }}
           game-version-filter: none
+          dependencies: |
+            luckperms(optional){modrinth:Vebnzrzj}
 
       - name: Publish Paper
         if: needs.build.outputs.is_marketplace_publishable == 'true'
@@ -249,6 +253,7 @@ jobs:
           game-version-filter: none
           dependencies: |
             luckperms(optional){modrinth:Vebnzrzj}
+            worldguard(optional){modrinth:DKY9btbd}
 
       - name: Download all build artifacts for GitHub Release
         if: needs.build.outputs.is_marketplace_publishable == 'true' && needs.build.outputs.is_release == 'true'
@@ -329,20 +334,15 @@ jobs:
         id: versions
         run: |
           python3 - <<'EOF'
+          import json
           import os
           import re
 
           mc = "${{ matrix.task.mc }}"
-          props = {}
 
-          with open(f"versions/{mc}/gradle.properties") as f:
-              for line in f:
-                  line = line.strip()
-                  if not line or line.startswith("#") or "=" not in line:
-                      continue
-
-                  key, value = line.split("=", 1)
-                  props[key.strip()] = value.strip()
+          with open("versions.json") as f:
+              data = json.load(f)
+          props = data["versions"][mc]
 
           minecraft_version = props.get("minecraft.version", mc)
           base_mc = minecraft_version.split("-", 1)[0]
@@ -396,7 +396,7 @@ jobs:
               lines.append(f"## {header.strip()}")
 
               for item in body.splitlines():
-                  item = item.strip()
+                  item = item.rstrip()
                   if item:
                       lines.append(item)
 
@@ -425,6 +425,8 @@ jobs:
           dependencies: |
             fabric-api(required){modrinth:P7dR8mSH}
             luckperms(optional){modrinth:Vebnzrzj}
+            modmenu(optional){modrinth:mOgUt4GM}
+            cloth-config(optional){modrinth:9s6osm5g}
 
       - name: Publish Fabric to CurseForge
         if: needs.build.outputs.is_marketplace_publishable == 'true' && matrix.task.kind == 'fabric' && steps.versions.outputs.curseforge_publishable == 'true'
@@ -444,6 +446,8 @@ jobs:
           dependencies: |
             fabric-api(required){curseforge:306612}
             luckperms(optional){curseforge:431733}
+            modmenu(optional){curseforge:308702}
+            cloth-config(optional){curseforge:348521}
 
       - name: Publish NeoForge to Modrinth
         if: needs.build.outputs.is_marketplace_publishable == 'true' && matrix.task.kind == 'neoforge'
@@ -461,6 +465,7 @@ jobs:
           game-version-filter: none
           dependencies: |
             luckperms(optional){modrinth:Vebnzrzj}
+            cloth-config(optional){modrinth:9s6osm5g}
 
       - name: Publish NeoForge to CurseForge
         if: needs.build.outputs.is_marketplace_publishable == 'true' && matrix.task.kind == 'neoforge' && steps.versions.outputs.curseforge_publishable == 'true'
@@ -477,6 +482,7 @@ jobs:
           game-versions: ${{ steps.versions.outputs.mc_versions }}
           dependencies: |
             luckperms(optional){curseforge:431733}
+            cloth-config(optional){curseforge:348521}
 
   discord-announce:
     name: Announce release on Discord

@@ -1,13 +1,13 @@
 package com.dreamdisplays.platform.client.subtitles
 
-import com.dreamdisplays.api.security.model.MediaHttpUrl
+import com.dreamdisplays.api.media.source.MediaHttpUrl
 import com.dreamdisplays.util.subtitle.WebVttParser
 import com.dreamdisplays.util.subtitle.WebVttTrack
 import org.slf4j.LoggerFactory
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
+import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
@@ -19,29 +19,44 @@ private object WebVttLoader {
     private val executor = Executors.newFixedThreadPool(2) { task ->
         Thread(task, "DreamDisplays-VTT").apply { isDaemon = true }
     }
-    private val client = HttpClient.newBuilder()
-        .executor(executor)
-        .followRedirects(HttpClient.Redirect.NORMAL)
-        .connectTimeout(Duration.ofSeconds(6))
-        .build()
+    private val deadlines = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "DreamDisplays-VTT-deadline").apply { isDaemon = true }
+    }
+    private const val CONNECT_TIMEOUT_MS = 6_000
+    private const val BODY_TIMEOUT_MS = 12_000
 
     fun load(url: String): CompletableFuture<WebVttTrack> = CompletableFuture.supplyAsync({
         val mediaUrl = MediaHttpUrl.parse(url, 2_048) ?: throw IllegalArgumentException("VTT must use HTTP(S).")
-        val request = HttpRequest.newBuilder(mediaUrl.uri)
-            .timeout(Duration.ofSeconds(12))
-            .header("User-Agent", "DreamDisplays/1.9.5 Kirazium-VTT")
-            .header("Accept", "text/vtt,text/plain;q=0.9,*/*;q=0.1")
-            .header("Accept-Encoding", "identity")
-            .GET()
-            .build()
-        val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
-        require(response.statusCode() in 200..299) { "HTTP ${response.statusCode()}" }
-        response.headers().firstValueAsLong("Content-Length").ifPresent { length ->
-            require(length <= MAX_BYTES) { "VTT exceeds ${MAX_BYTES / 1024} KiB." }
+        val connection = mediaUrl.uri.toURL().openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = BODY_TIMEOUT_MS
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("User-Agent", "DreamDisplays/1.10.4 Kirazium-VTT")
+            connection.setRequestProperty("Accept", "text/vtt,text/plain;q=0.9,*/*;q=0.1")
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            require(connection.responseCode in 200..299) { "HTTP ${connection.responseCode}" }
+            require(connection.contentLengthLong <= MAX_BYTES) { "VTT exceeds ${MAX_BYTES / 1024} KiB." }
+            val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(BODY_TIMEOUT_MS.toLong())
+            val cancellation = deadlines.schedule({ connection.disconnect() }, BODY_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            val bytes = try { connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                while (true) {
+                    val remaining = deadline - System.nanoTime()
+                    if (remaining <= 0L) throw SocketTimeoutException("VTT body download timed out.")
+                    connection.readTimeout = TimeUnit.NANOSECONDS.toMillis(remaining).coerceAtLeast(1L).toInt()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    require(output.size() + count <= MAX_BYTES) { "VTT exceeds ${MAX_BYTES / 1024} KiB." }
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            } } finally { cancellation.cancel(false) }
+            WebVttParser.parse(bytes)
+        } finally {
+            try { connection.errorStream?.close() } finally { connection.disconnect() }
         }
-        val bytes = response.body().use { input -> input.readNBytes(MAX_BYTES + 1) }
-        require(bytes.size <= MAX_BYTES) { "VTT exceeds ${MAX_BYTES / 1024} KiB." }
-        WebVttParser.parse(bytes)
     }, executor)
 }
 

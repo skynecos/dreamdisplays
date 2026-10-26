@@ -20,7 +20,6 @@ import kotlin.math.min
 
 /** Utils for 3D region calculations, boundary checks, and world / level resolution. The single source of truth for both. */
 object RegionUtil {
-    /** Computes the [RegionData] describing the axis-aligned box between two integer corners. */
     private fun calculateRegion(x1: Int, y1: Int, z1: Int, x2: Int, y2: Int, z2: Int): RegionData {
         val minX = min(x1, x2)
         val minY = min(y1, y2)
@@ -62,7 +61,6 @@ object RegionUtil {
                 pos.z in getRange(pos1.z, pos2.z)
     }
 
-    /** Returns the inclusive integer range covering [a] and [b] regardless of order. */
     private fun getRange(a: Int, b: Int): IntRange = min(a, b)..max(a, b)
 
     /** Returns the block position [player] is looking at within [maxDistance] blocks, or `null`. */
@@ -103,10 +101,6 @@ object RegionUtil {
      */
     fun playerServer(player: ServerPlayer): MinecraftServer = playerServerLevel(player).server
 
-    /**
-     * Returns the [ServerLevel] of a [ServerPlayer]. `ServerPlayer.serverLevel()` was renamed to `level()`
-     * (covariant return) in later versions — chisel-gated here.
-     */
     private fun playerServerLevel(player: ServerPlayer): ServerLevel =
         //? if >=1.21.11 {
         player.level()
@@ -128,11 +122,15 @@ object RegionUtil {
         val deltaY: Int,
         val deltaZ: Int,
     ) {
-        /** Screen width in blocks; for vertical (floor / ceiling) facings this is the X-axis span. */
-        fun screenWidth(isVertical: Boolean): Int = if (isVertical) deltaX else max(deltaX, deltaZ)
-
-        /** Screen height in blocks; for vertical (floor / ceiling) facings this is the Z-axis span. */
-        fun screenHeight(isVertical: Boolean): Int = if (isVertical) deltaZ else deltaY
+        /**
+         * Width, height, and depth when the clicked face decides which axis is the screen's depth.
+         * Pass the absolute face steps. A north or south face is deep along Z; an up or down face is deep along Y.
+         */
+        fun screenExtents(faceModX: Int, faceModY: Int, faceModZ: Int): Triple<Int, Int, Int> = when {
+            faceModY != 0 -> Triple(deltaX, deltaZ, deltaY)
+            faceModX != 0 -> Triple(deltaZ, deltaY, deltaX)
+            else -> Triple(deltaX, deltaY, deltaZ)
+        }
 
         /** Returns the min-corner [Location] of this region in [world]. */
         @PaperOnly

@@ -1,6 +1,6 @@
 package com.dreamdisplays.media.source.bilibili
 
-import com.dreamdisplays.api.media.source.model.MediaSource
+import com.dreamdisplays.api.media.source.MediaSource
 import com.dreamdisplays.media.source.platform.PlatformMetadataCache
 import com.dreamdisplays.media.source.platform.PlatformVideoMetadata
 import com.dreamdisplays.media.source.platform.YtDlpMetadataFallback
@@ -29,7 +29,6 @@ object BilibiliMetadataCache {
         else -> "short:${source.url}"
     }
 
-    /** Reconstructs the [MediaSource.Bilibili] the fetch needs from a [cacheKey]. */
     private fun sourceFor(key: String): MediaSource.Bilibili? = when {
         key.startsWith("video:av") -> {
             val (avid, part) = key.removePrefix("video:av").split(':')

@@ -8,7 +8,8 @@ import com.dreamdisplays.platform.server.managers.PlayerManager
 import com.dreamdisplays.platform.server.meta.Scheduler
 import com.dreamdisplays.platform.server.playback.FullscreenBroadcastManager
 import com.dreamdisplays.platform.server.playback.WatchPartyManager
-import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.PlatformUtil
 import com.dreamdisplays.platform.server.utils.RegionUtil
 import com.dreamdisplays.platform.server.utils.net.V2PlayerTracker
@@ -35,7 +36,6 @@ import java.util.*
 @PaperOnly
 @NullMarked
 class PlayerListener : Listener {
-    /** Tracks whether the world has been validated after startup. */
     private var hasValidatedWorld = false
 
     /**
@@ -58,7 +58,7 @@ class PlayerListener : Listener {
 
         Scheduler.runPlayerLater(player, 600L) {
             if (PlayerManager.getVersion(player) == null && !PlayerManager.hasBeenNotifiedAboutModRequired(player)) {
-                MessageUtil.sendMessage(player, "modRequired")
+                ServerMessage.MOD_REQUIRED.sendTo(player)
                 PlayerManager.setModRequiredNotified(player, true)
             }
         }
@@ -78,7 +78,7 @@ class PlayerListener : Listener {
 
 /**
  * Shared `Fabric` / `NeoForge` player join / leave handling. [FabricPlayerListener] and
- * [NeoForgePlayerListener] only adapt their loader's event-subscription API and hand off here.
+ * [NeoForgePlayerConnectionListener] only adapt their loader's event-subscription API and hand off here.
  */
 @ModLoaderOnly
 object VanillaPlayerListener {
@@ -103,7 +103,7 @@ object VanillaPlayerListener {
                 PlayerManager.getVersion(player.uuid) == null &&
                 !PlayerManager.hasBeenNotifiedAboutModRequired(player.uuid)
             ) {
-                MessageUtil.sendMessage(player, "modRequired")
+                ServerMessage.MOD_REQUIRED.sendTo(player)
                 PlayerManager.setModRequiredNotified(player.uuid, true)
             }
         }
@@ -132,8 +132,9 @@ object FabricPlayerListener {
 }
 
 /** `NeoForge` event-subscription adapter for [VanillaPlayerListener]. */
+// Never name it NeoForgePlayerListener
 @NeoForgeOnly
-object NeoForgePlayerListener {
+object NeoForgePlayerConnectionListener {
     @SubscribeEvent
     fun onLogin(event: PlayerEvent.PlayerLoggedInEvent) {
         val player = event.entity as? ServerPlayer ?: return

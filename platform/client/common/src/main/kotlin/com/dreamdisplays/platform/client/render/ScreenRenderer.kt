@@ -12,41 +12,21 @@ import net.minecraft.client.renderer.rendertype.RenderType
 /*import net.minecraft.client.renderer.RenderType*/
 import com.dreamdisplays.api.display.model.property.DisplayRotation
 import com.dreamdisplays.api.display.model.property.DisplayFacing
-import com.dreamdisplays.api.display.model.property.DisplayId
-import com.dreamdisplays.api.render.backend.service.RenderContext
-import com.dreamdisplays.api.render.texture.model.TextureHandle
-import com.dreamdisplays.api.runtime.registry.service.getOrNull
-import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayRegistry
 import com.dreamdisplays.platform.client.displays.DisplayScreen
+import com.dreamdisplays.platform.client.displays.PlacedDisplays
+import org.joml.Quaternionf
 import com.dreamdisplays.platform.client.render.ScreenRenderer.drawLayer
 import com.mojang.blaze3d.vertex.PoseStack
 import com.mojang.blaze3d.vertex.VertexConsumer
+//? if <26.3 {
 import com.mojang.blaze3d.vertex.VertexFormat
+//?}
 import net.minecraft.client.Camera
-import net.minecraft.client.Minecraft
-import net.minecraft.client.gui.Font
-import net.minecraft.world.phys.Vec3
-import kotlin.math.floor
 import kotlin.math.sin
 
-/** Version-neutral bridge for submitting world-space text through the active level renderer. */
-fun interface WorldTextSubmitter {
-    fun submit(
-        stack: PoseStack,
-        text: String,
-        x: Float,
-        y: Float,
-        color: Int,
-        shadow: Boolean,
-        mode: Font.DisplayMode,
-        backgroundColor: Int,
-        packedLight: Int,
-    )
-}
-
 /** Renders screens in the world. Better not to touch this shit. */
-object ScreenRenderer : ClientRenderService {
+object ScreenRenderer {
     private typealias QuadAppender = (PoseStack.Pose, VertexConsumer) -> Unit
     private typealias QuadRenderer = (RenderType, QuadAppender) -> Unit
 
@@ -55,97 +35,68 @@ object ScreenRenderer : ClientRenderService {
      * for [UnshadedDisplayPass]'s second draw of a frame already on screen.
      */
     fun render(stack: PoseStack, camera: Camera, replay: Boolean = false) {
-        render(stack, camera, replay, submitText = null) { type, appendVertices ->
-            drawImmediate(stack, type, appendVertices)
+        ImmediateRenderCompat.beginBatch()
+        try {
+            render(stack, camera, replay) { type, appendVertices ->
+                drawImmediate(stack, type, appendVertices)
+            }
+        } finally {
+            ImmediateRenderCompat.flushBatch()
         }
     }
-
-    /** Immediate-quad render entry point with a platform-owned text submission bridge. */
-    fun render(
-        stack: PoseStack,
-        camera: Camera,
-        replay: Boolean = false,
-        submitText: WorldTextSubmitter,
-    ) {
-        render(stack, camera, replay, submitText) { type, appendVertices ->
-            drawImmediate(stack, type, appendVertices)
-        }
-    }
-
-    /**
-     * [ClientRenderService] render entry point. Unwraps a [MinecraftRenderContext] and delegates to
-     * [render]; any other [RenderContext] type is a no-op (this renderer can only draw through a live
-     * [PoseStack] / [Camera]).
-     */
-    override fun renderAll(context: RenderContext) {
-        val ctx = context as? MinecraftRenderContext ?: return
-        render(ctx.stack, ctx.camera)
-    }
-
-    /** No-op: live screens are created by [DisplayRegistry] from network packets, not flat entries. */
-    override fun registerDisplay(entry: DisplayRenderEntry) = Unit
-
-    /** Unregisters the live screen matching [displayId], delegating to [DisplayRegistry]. */
-    override fun unregisterDisplay(displayId: DisplayId) {
-        DisplayRegistry.getScreens()
-            .firstOrNull { it.uuid == displayId.uuid }
-            ?.let { DisplayRegistry.unregisterScreen(it) }
-    }
-
-    /** No-op: each [DisplayScreen] owns its own GPU texture lifecycle in the current model. */
-    override fun updateTexture(displayId: DisplayId, handle: TextureHandle) = Unit
-
-    /** Number of live screens with an uploaded texture. Those this renderer will actually draw. */
-    override val registeredCount: Int; get() = DisplayRegistry.getScreens().count { it.hasTexture }
 
     /** Iterates all registered screens and lets the caller submit quads through the active renderer. */
-    fun render(
-        stack: PoseStack,
-        camera: Camera,
-        replay: Boolean = false,
-        submitText: WorldTextSubmitter? = null,
-        drawQuad: QuadRenderer,
-    ) {
+    fun render(stack: PoseStack, camera: Camera, replay: Boolean = false, submitText: WorldTextSubmitter? = null, drawQuad: QuadRenderer) {
         val cameraPos =
             //? if >=1.21.11 {
             camera.position()
         //?} else
         /*camera.getPosition()*/
+        DisplayCulling.begin(camera, cameraPos)
         for (displayScreen in DisplayRegistry.getScreens()) {
             if (displayScreen.isDormant || !displayScreen.hasTexture) continue
+            if (!DisplayCulling.isVisible(displayScreen)) {
+                if (!replay) displayScreen.fitTextureWhileHidden()
+                continue
+            }
 
             stack.pushPose()
 
-            val pos = displayScreen.pos
-            val screenCenter = Vec3.atLowerCornerOf(pos)
-            val relativePos = screenCenter.subtract(cameraPos)
-            stack.translate(relativePos.x, relativePos.y, relativePos.z)
+            val placement = PlacedDisplays.placementOf(displayScreen.uuid)
+            if (placement != null) {
+                val t = placement.transform(PlacedDisplays.partialTick())
+                stack.translate(t.originX - cameraPos.x, t.originY - cameraPos.y, t.originZ - cameraPos.z)
+                DisplayPoseStack.rotate(
+                    stack, Quaternionf(t.rotationX.toFloat(), t.rotationY.toFloat(), t.rotationZ.toFloat(), t.rotationW.toFloat()),
+                )
+                stack.scale(t.scaleX.toFloat(), t.scaleY.toFloat(), t.scaleZ.toFloat())
+            } else {
+                val pos = displayScreen.pos
+                stack.translate(pos.x - cameraPos.x, pos.y - cameraPos.y, pos.z - cameraPos.z)
+            }
 
             renderScreenTexture(displayScreen, stack, replay, submitText, drawQuad)
 
             stack.popPose()
         }
 
-        // The registered RenderHook extends the world pass after the mod's own screens.
-        // ClientRenderModule installs the default hook for API-registered surfaces.
-        // The world render hooks do not surface a partial tick, hence the 0f tickDelta.
-        // Only on the level-pass draw: the replay would run every surface a second time.
-        if (!replay) DreamServices.registry.getOrNull<RenderHook>()
-            ?.onRender(MinecraftRenderContext(stack, camera, 0f))
+        ImmediateRenderCompat.flushBatch()
     }
 
-    /** Distance the [UnshadedDisplayPass] replay is lifted off the level-pass quad it repeats, in blocks. */
     private const val REPLAY_LIFT = 0.01f
 
-    /** Translates and rotates the pose for [displayScreen]'s facing direction, then renders the video or fallback color. */
     private fun renderScreenTexture(
-        displayScreen: DisplayScreen,
-        stack: PoseStack,
-        replay: Boolean,
-        submitText: WorldTextSubmitter?,
-        drawQuad: QuadRenderer,
+        displayScreen: DisplayScreen, stack: PoseStack, replay: Boolean, submitText: WorldTextSubmitter?, drawQuad: QuadRenderer,
     ) {
         if (!replay) displayScreen.fitTexture()
+
+        if (displayScreen.conforming) {
+            val wrapped = ConformingWorldMesh.quads(displayScreen)
+            if (wrapped != null) {
+                ConformingScreenDraw.render(displayScreen, wrapped, if (replay) REPLAY_LIFT else 0f, drawQuad, renderSubtitles = !replay)
+                return
+            }
+        }
 
         val facing = displayScreen.facing
         val w = displayScreen.width
@@ -168,10 +119,10 @@ object ScreenRenderer : ClientRenderService {
                 lift,
             )
         }
-        if (!replay) renderSubtitle(displayScreen, stack, submitText)
+
+        if (!replay) PersonalSubtitleRenderer.render(displayScreen, stack, submitText, drawQuad)
     }
 
-    /** Draws a unit quad using the screen's GPU texture, ramping up the first-appear fade. */
     private fun renderGpuTexture(drawQuad: QuadRenderer, displayScreen: DisplayScreen) {
         val appear = displayScreen.appearProgress()
         val base = if (displayScreen.isYuvTexture) displayScreen.brightness.coerceIn(0f, 1f) * 255f else 255f
@@ -181,136 +132,8 @@ object ScreenRenderer : ClientRenderService {
         }
     }
 
-    /** Depth-layer spacing between placeholder elements, in blocks toward the viewer (see [drawLayer]). */
     private const val OVERLAY_LIFT = 0.01f
 
-    /** Subtitles occupy at most this fraction of the video width and lower-screen height. */
-    private const val SUBTITLE_WIDTH_FRACTION = 0.88f
-    private const val SUBTITLE_HEIGHT_FRACTION = 0.42f
-    private const val SUBTITLE_BOTTOM_MARGIN = 0.075f
-    private const val SUBTITLE_LIFT = 0.20f
-    private const val SUBTITLE_MAX_LINES = 4
-
-    /** Draws active WebVTT cues in world space, slightly in front of the video plane. */
-    private fun renderSubtitle(
-        displayScreen: DisplayScreen,
-        stack: PoseStack,
-        submitText: WorldTextSubmitter?,
-    ) {
-        if (!displayScreen.isVideoStarted) return
-        val rawLines = displayScreen.activeSubtitleLines
-        if (rawLines.isEmpty()) return
-
-        val minecraft = Minecraft.getInstance()
-        val font = minecraft.font
-        val lineAdvancePixels = font.lineHeight + 2
-        val desiredLineHeightBlocks = (displayScreen.height * 0.05f).coerceIn(0.55f, 1.6f)
-        // Screen quads scale X by width and Y by height. Text must cancel that anisotropy so
-        // wide cinema displays do not stretch glyphs horizontally or collapse lines into each other.
-        val worldScalePerPixel = desiredLineHeightBlocks / lineAdvancePixels.toFloat()
-        val textScaleX = worldScalePerPixel / displayScreen.width.coerceAtLeast(1).toFloat()
-        val textScaleY = worldScalePerPixel / displayScreen.height.coerceAtLeast(1).toFloat()
-        val wrapPixels = floor(SUBTITLE_WIDTH_FRACTION / textScaleX).toInt().coerceIn(32, 4096)
-        val maxLinesByHeight = floor(SUBTITLE_HEIGHT_FRACTION / (lineAdvancePixels * textScaleY))
-            .toInt()
-            .coerceAtLeast(1)
-        val lines = wrapSubtitleLines(rawLines, font, wrapPixels)
-            .take(minOf(SUBTITLE_MAX_LINES, maxLinesByHeight))
-        if (lines.isEmpty()) return
-        //? if >=26.2 {
-        val subtitleSubmitter = submitText ?: return
-        //?}
-
-        val totalHeight = lines.size * lineAdvancePixels * textScaleY
-        stack.pushPose()
-        DisplayGeometry.liftTowardViewer(stack, displayScreen.facing, SUBTITLE_LIFT)
-        DisplayGeometry.applyScreenTransform(
-            stack,
-            displayScreen.facing,
-            displayScreen.width,
-            displayScreen.height,
-        )
-        stack.translate(0.5f, SUBTITLE_BOTTOM_MARGIN + totalHeight, 0f)
-        stack.scale(textScaleX, -textScaleY, 1f)
-
-        //? if <26.2 {
-        val buffers = minecraft.renderBuffers().bufferSource()
-        //?}
-        lines.forEachIndexed { index, line ->
-            //? if >=26.2 {
-            subtitleSubmitter.submit(
-                stack,
-                line,
-                -font.width(line) / 2f,
-                (index * lineAdvancePixels).toFloat(),
-                -1,
-                false,
-                Font.DisplayMode.NORMAL,
-                0,
-                0xF000F0,
-            )
-            //?} else
-            /*
-            font.drawInBatch(
-                line,
-                -font.width(line) / 2f,
-                (index * lineAdvancePixels).toFloat(),
-                -1,
-                false,
-                stack.last().pose(),
-                buffers,
-                Font.DisplayMode.NORMAL,
-                0,
-                0xF000F0,
-            )
-            */
-        }
-        //? if <26.2 {
-        buffers.endBatch()
-        //?}
-        stack.popPose()
-    }
-
-    /** Word-wraps cue lines in Minecraft's actual font metrics, including safe splitting of long words. */
-    private fun wrapSubtitleLines(rawLines: List<String>, font: Font, maxWidth: Int): List<String> {
-        val output = ArrayList<String>()
-        for (raw in rawLines) {
-            var current = ""
-            for (word in raw.trim().split(Regex("\\s+")).filter(String::isNotEmpty)) {
-                val candidate = if (current.isEmpty()) word else "$current $word"
-                if (font.width(candidate) <= maxWidth) {
-                    current = candidate
-                    continue
-                }
-                if (current.isNotEmpty()) {
-                    output += current
-                    current = ""
-                }
-                if (font.width(word) <= maxWidth) {
-                    current = word
-                } else {
-                    var part = ""
-                    for (character in word) {
-                        val next = part + character
-                        if (part.isNotEmpty() && font.width(next) > maxWidth) {
-                            output += part
-                            part = character.toString()
-                        } else {
-                            part = next
-                        }
-                    }
-                    current = part
-                }
-            }
-            if (current.isNotEmpty()) output += current
-        }
-        return output
-    }
-
-    /**
-     * Loading / error placeholder. Loading is a faintly breathing dark backdrop with an indeterminate progress bar;
-     * error swaps in a static red tint.
-     */
     private fun renderPlaceholder(
         stack: PoseStack, drawQuad: QuadRenderer, type: RenderType,
         facing: DisplayFacing, w: Int, h: Int, error: Boolean, lift: Float,
@@ -353,25 +176,16 @@ object ScreenRenderer : ClientRenderService {
         }
     }
 
-    /**
-     * Runs [body] with the screen transform applied and the layer lifted [lift] blocks toward the
-     * viewer (in world space, before the transform's z-flattening scale) so stacked overlay quads
-     * occupy distinct depths.
-     */
     private inline fun drawLayer(
         stack: PoseStack, facing: DisplayFacing, w: Int, h: Int, lift: Float, body: () -> Unit,
     ) {
         stack.pushPose()
-        if (lift != 0f) DisplayGeometry.liftTowardViewer(stack, facing, lift)
-        DisplayGeometry.applyScreenTransform(stack, facing, w, h)
+        if (lift != 0f) DisplayPoseStack.liftTowardViewer(stack, facing, lift)
+        DisplayPoseStack.applyScreenTransform(stack, facing, w, h)
         body()
         stack.popPose()
     }
 
-    /**
-     * Appends a solid-color rectangle spanning [[x0], [y0] and [x1],[y1]] in unit-quad space (UV is ignored: the
-     * overlay type samples a 1x1 white texture). Wound CCW to match the video quad.
-     */
     private fun appendRect(
         pose: PoseStack.Pose, builder: VertexConsumer,
         x0: Float, y0: Float, x1: Float, y1: Float, r: Int, g: Int, b: Int,
@@ -382,10 +196,9 @@ object ScreenRenderer : ClientRenderService {
         addVertex(pose, builder, x0, y1, 0f, r, g, b, 0f, 0f)
     }
 
-    /** Texture corners in vertex order; rotating the list by [rotation] spins the image. */
-    private val baseUv = arrayOf(0f to 1f, 1f to 1f, 1f to 0f, 0f to 0f)
+    private val baseU = floatArrayOf(0f, 1f, 1f, 0f)
+    private val baseV = floatArrayOf(1f, 1f, 0f, 0f)
 
-    /** Appends a quad with the given [rotation] and color [[r], [g], [b] (0..255). */
     private fun appendQuad(
         pose: PoseStack.Pose,
         builder: VertexConsumer,
@@ -395,14 +208,12 @@ object ScreenRenderer : ClientRenderService {
         rotation: DisplayRotation,
     ) {
         val rot = rotation.quarterTurns
-        val uv = Array(4) { baseUv[(it + rot) % 4] }
-        addVertex(pose, builder, 0f, 0f, 0f, r, g, b, uv[0].first, uv[0].second)
-        addVertex(pose, builder, 1f, 0f, 0f, r, g, b, uv[1].first, uv[1].second)
-        addVertex(pose, builder, 1f, 1f, 0f, r, g, b, uv[2].first, uv[2].second)
-        addVertex(pose, builder, 0f, 1f, 0f, r, g, b, uv[3].first, uv[3].second)
+        addVertex(pose, builder, 0f, 0f, 0f, r, g, b, baseU[rot % 4], baseV[rot % 4])
+        addVertex(pose, builder, 1f, 0f, 0f, r, g, b, baseU[(1 + rot) % 4], baseV[(1 + rot) % 4])
+        addVertex(pose, builder, 1f, 1f, 0f, r, g, b, baseU[(2 + rot) % 4], baseV[(2 + rot) % 4])
+        addVertex(pose, builder, 0f, 1f, 0f, r, g, b, baseU[(3 + rot) % 4], baseV[(3 + rot) % 4])
     }
 
-    /** Adds a vertex with the given [r,g,b] (0..255) and [u,v] (0..1) coordinates. */
     private fun addVertex(
         pose: PoseStack.Pose,
         builder: VertexConsumer,
@@ -418,13 +229,23 @@ object ScreenRenderer : ClientRenderService {
         builder.addVertex(pose, x, y, z).setUv(u, v).setColor(r, g, b, 255)
     }
 
-    /** Draws a quad using the given [type] and [appendVertices] function. A bit of a hack. */
     private fun drawImmediate(stack: PoseStack, type: RenderType, appendVertices: QuadAppender) {
         ImmediateRenderCompat.draw(stack, type, appendVertices)
     }
 
-    /** Compatibility layer for the new immediate mode API. */
     private object ImmediateRenderCompat {
+        fun beginBatch() {
+            //? if >=26.2 {
+            batching = true
+            //?}
+        }
+
+        fun flushBatch() {
+            //? if >=26.2 {
+            flush262()
+            //?}
+        }
+
         fun draw(stack: PoseStack, type: RenderType, appendVertices: QuadAppender) {
             //? if >=26.2 {
             draw262(stack, type, appendVertices)
@@ -446,34 +267,58 @@ object ScreenRenderer : ClientRenderService {
         }
 
         //? if >=26.2 {
-        /** Staged-buffer class and constructor for the 26.2+ draw path, resolved once. */
         private val stagedClass: Class<*> by lazy { Class.forName("net.minecraft.client.renderer.StagedVertexBuffer") }
         private val stagedCtor by lazy {
             stagedClass.getConstructor(java.util.function.Supplier::class.java, Int::class.javaPrimitiveType)
         }
 
-        /** Per-class method cache so the staged draw resolves each method once, not per quad per frame. */
         private val methodCache = java.util.concurrent.ConcurrentHashMap<String, java.lang.reflect.Method>()
 
-        /** Looks up a public method on [owner] through the cache. */
         private fun method(owner: Class<*>, name: String, vararg params: Class<*>): java.lang.reflect.Method =
             methodCache.computeIfAbsent("${owner.name}#$name") { owner.getMethod(name, *params) }
 
+        private var staged: Any? = null
+        private var batching = false
+        private val batchTypes = ArrayList<RenderType>()
+        private val batchDraws = ArrayList<Any>()
+
+        private fun stagedBuffer(): Any =
+            staged ?: stagedCtor.newInstance(java.util.function.Supplier { "dream-displays-immediate" }, 16_384)
+                .also { staged = it }
+
         private fun draw262(stack: PoseStack, type: RenderType, appendVertices: QuadAppender) {
-            val staged = stagedCtor.newInstance(java.util.function.Supplier { "dream-displays-immediate" }, 1536)
+            val buffer = stagedBuffer()
+            val primitiveTopology = method(type.javaClass, "primitiveTopology").invoke(type)
+            val draw = method(stagedClass, "appendDraw", VertexFormat::class.java, primitiveTopology.javaClass)
+                .invoke(buffer, type.format(), primitiveTopology)
+            batchTypes += type
+            batchDraws += draw
+            val builder = method(stagedClass, "getVertexBuilder", draw.javaClass)
+                .invoke(buffer, draw) as VertexConsumer
+            appendVertices(stack.last(), builder)
+            if (!batching) flush262()
+        }
+
+        private fun flush262() {
+            batching = false
+            val buffer = staged ?: return
+            if (batchDraws.isEmpty()) return
             try {
-                val primitiveTopology = method(type.javaClass, "primitiveTopology").invoke(type)
-                val draw = method(stagedClass, "appendDraw", VertexFormat::class.java, primitiveTopology.javaClass)
-                    .invoke(staged, type.format(), primitiveTopology)
-                val builder = method(stagedClass, "getVertexBuilder", draw.javaClass)
-                    .invoke(staged, draw) as VertexConsumer
-                appendVertices(stack.last(), builder)
-                method(stagedClass, "upload").invoke(staged)
-                val executeInfo = method(stagedClass, "getExecuteInfo", draw.javaClass).invoke(staged, draw) ?: return
-                val prepared = method(type.javaClass, "prepare").invoke(type)
-                method(prepared.javaClass, "drawFromBuffer", executeInfo.javaClass).invoke(prepared, executeInfo)
+                method(stagedClass, "upload").invoke(buffer)
+                for (i in batchDraws.indices) {
+                    val draw = batchDraws[i]
+                    val executeInfo = method(stagedClass, "getExecuteInfo", draw.javaClass).invoke(buffer, draw) ?: continue
+                    val type = batchTypes[i]
+                    val prepared = method(type.javaClass, "prepare").invoke(type)
+                    method(prepared.javaClass, "drawFromBuffer", executeInfo.javaClass).invoke(prepared, executeInfo)
+                }
             } finally {
-                (staged as AutoCloseable).close()
+                batchTypes.clear()
+                batchDraws.clear()
+                runCatching { method(stagedClass, "endFrame").invoke(buffer) }.onFailure {
+                    runCatching { (buffer as AutoCloseable).close() }
+                    staged = null
+                }
             }
         }
         //?}

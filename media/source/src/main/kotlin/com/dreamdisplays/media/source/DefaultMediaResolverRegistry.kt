@@ -1,14 +1,15 @@
 package com.dreamdisplays.media.source
 
 import com.dreamdisplays.api.media.model.DreamMediaException
-import com.dreamdisplays.api.media.source.service.MediaResolverService
-import com.dreamdisplays.api.media.source.service.MediaResolverRegistry
-import com.dreamdisplays.api.media.source.model.MediaSource
-import com.dreamdisplays.api.media.source.model.ResolvedMedia
+import com.dreamdisplays.api.media.source.MediaResolverService
+import com.dreamdisplays.api.media.source.MediaResolverRegistry
+import com.dreamdisplays.api.media.source.MediaSource
+import com.dreamdisplays.api.media.source.ResolvedMedia
 import com.dreamdisplays.media.runtime.security.MediaHostGuard
 import com.dreamdisplays.util.DreamCoroutines
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -21,34 +22,21 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /** Default [MediaResolverRegistry]: tries registered resolvers in priority order, returning the first success. */
 class DefaultMediaResolverRegistry : MediaResolverRegistry {
-    /** Backing list of resolvers, sorted by priority on every access. */
     private val backing = CopyOnWriteArrayList<MediaResolverService>()
-
-    /** Limits concurrent prefetch hints to avoid network/process flooding. */
     private val prefetchPermit = Semaphore(PREFETCH_CONCURRENCY)
-
-    /**
-     * Sources with a hint already in flight. The client fires [prefetch] on every URL change and on
-     * every display load, so without this a wall of screens showing the same video queues one
-     * identical warm-up per screen.
-     */
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
 
-    /** Returns the registered resolvers in priority order (highest first). */
     override val resolvers: List<MediaResolverService>
         get() = backing.sortedByDescending { it.priority }
 
-    /** Adds [resolver] to the chain (btw resolver instance is never registered twice). */
     override fun register(resolver: MediaResolverService) {
         if (resolver !in backing) backing.add(resolver)
     }
 
-    /** Removes [resolver] from the chain; no-op if it was never registered. */
     override fun unregister(resolver: MediaResolverService) {
         backing.remove(resolver)
     }
 
-    /** Prefetches [source] through capable resolvers, stopping at the first success (best-effort). */
     override fun prefetch(source: MediaSource) {
         val key = source.toResolvableUrl() ?: source.toString()
         if (!inFlight.add(key)) return
@@ -84,7 +72,10 @@ class DefaultMediaResolverRegistry : MediaResolverRegistry {
         val errors = arrayOfNulls<Throwable>(candidates.size)
         val remaining = AtomicInteger(candidates.size)
 
-        candidates.forEachIndexed { index, resolver ->
+        // Once a winner lands, candidates still waiting out their head start are canceled so they never
+        // spawn work. One already resolving is left to finish (not interrupted): an interrupted extract can
+        // surface as "unresolvable" and poison a resolver's negative cache, while a finished one warms it.
+        val jobs = candidates.mapIndexed { index, resolver ->
             DreamCoroutines.clientIo.launch {
                 if (index > 0) delay(RACE_HEAD_START * index)
                 if (!winner.isCompleted) {
@@ -103,10 +94,13 @@ class DefaultMediaResolverRegistry : MediaResolverRegistry {
                 }
             }
         }
-        return winner.await()
+        try {
+            return winner.await()
+        } finally {
+            jobs.forEach(Job::cancel)
+        }
     }
 
-    /** SSRF guard: blocks non-public addresses like localhost, 192.168.*, etc. */
     private fun isBlockedHost(source: MediaSource): Boolean {
         val url = when (source) {
             is MediaSource.Remote -> source.url

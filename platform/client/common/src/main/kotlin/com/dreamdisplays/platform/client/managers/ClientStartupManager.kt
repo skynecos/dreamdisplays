@@ -1,8 +1,8 @@
 package com.dreamdisplays.platform.client.managers
 
-import com.dreamdisplays.api.platform.service.keys.PlatformServices
-import com.dreamdisplays.api.runtime.module.DreamDisplaysModule
-import com.dreamdisplays.api.runtime.registry.service.register
+import com.dreamdisplays.core.services.keys.PlatformServices
+import com.dreamdisplays.core.runtime.DreamDisplaysModule
+import com.dreamdisplays.core.runtime.register
 import com.dreamdisplays.media.player.nativebridge.NativeMedia
 import com.dreamdisplays.media.player.process.FFmpegBinary
 import com.dreamdisplays.media.source.youtube.cache.FormatDiskCache
@@ -29,37 +29,28 @@ import kotlin.time.Duration.Companion.milliseconds
  * Handles client bootstrapping and background maintenance coroutines.
  */
 object ClientStartupManager {
-    /** Logger. */
-    private val logger = LoggerFactory.getLogger("DreamDisplays/ClientStartupManager")
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /** The client configuration, loaded from the mod's config directory. */
     val config: Config = Config(File("./config/${Initializer.MOD_ID}"))
 
-    /** How often the background loop re-pushes each display's quality setting. */
     private val qualityRefreshInterval = 2500.milliseconds
-
-    /**
-     * Owns every background maintenance coroutine. Runs on [Dispatchers.IO] (a pool of daemon threads), so a hung task
-     * never blocks the client's main thread.
-     */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** The default module set installed into every [ClientApplication] built by [start]. */
-    private val defaultModules: List<DreamDisplaysModule> = listOf(
-        ClientStorageModule,
+    private val defaultModules: List<DreamDisplaysModule> = [
         CoreDisplayModule,
         CorePlaybackModule,
         ClientAudioModule,
         MediaResolverModule,
         ClientOverlayModule,
         ClientInputModule,
-        ClientRenderModule,
         ClientCapabilityModule,
-    )
+    ]
 
     /** Loads config, wires services, hosts the application, prewarms backends, and launches maintenance loops. */
     fun start() {
         config.reload()
+        ClientStateManager.displaysEnabled = config.displaysEnabled
         ClientSettingsStore.load()
         WatchedVideoStore.load()
         CustomVideoStore.load()

@@ -2,13 +2,14 @@ package com.dreamdisplays.platform.client.displays
 
 import com.dreamdisplays.api.display.event.DisplayEvent
 import com.dreamdisplays.api.display.model.property.DisplayId
-import com.dreamdisplays.api.display.service.DisplaySystem
+import com.dreamdisplays.core.services.DisplaySystem
 import com.dreamdisplays.api.media.model.VideoQuality
-import com.dreamdisplays.api.media.audio.service.keys.AudioAcousticsServices
-import com.dreamdisplays.api.runtime.registry.service.getOrNull
-import com.dreamdisplays.api.storage.model.FullDisplayData
+import com.dreamdisplays.core.services.keys.AudioAcousticsServices
+import com.dreamdisplays.core.runtime.getOrNull
+import com.dreamdisplays.shared.storage.DisplayData
 import com.dreamdisplays.core.services.DisplayStorage
 import com.dreamdisplays.platform.client.core.DreamServices
+import com.dreamdisplays.platform.client.render.ConformingWorldMesh
 import com.dreamdisplays.platform.client.storage.ClientSettingsStore
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -20,12 +21,9 @@ object DisplayRegistry {
     val screens = ConcurrentHashMap<UUID, DisplayScreen>()
 
     /** Screens unregistered by the application, but still in memory. */
-    val unloadedScreens = ConcurrentHashMap<UUID, FullDisplayData>()
+    val unloadedScreens = ConcurrentHashMap<UUID, DisplayData>()
 
-    /** Event listeners subscribed to display lifecycle events. */
     private val eventListeners = CopyOnWriteArrayList<(DisplayEvent) -> Unit>()
-
-    /** The display system, if available. */
     private val displaySystem: DisplaySystem? get() = DreamServices.registry.getOrNull<DisplaySystem>()
 
     /** Returns a snapshot of all currently registered screens. */
@@ -60,10 +58,8 @@ object DisplayRegistry {
         // Disk-persisted fallback (survives a full game restart); overridden below by the
         // same-session cache when present, which is fresher.
         displayScreen.savedTimeNanos = clientSettings.savedTimeNanos
-        if (clientSettings.renderDistance > 0) displayScreen.renderDistance = clientSettings.renderDistance
 
         DisplayStorage.getDisplayData(displayScreen.uuid)?.let { saved ->
-            displayScreen.renderDistance = saved.renderDistance
             displayScreen.savedTimeNanos = saved.currentTimeNanos
         }
 
@@ -74,12 +70,12 @@ object DisplayRegistry {
 
     /** Unregisters a display; caches world-anchored ones for distance-triggered re-load. */
     fun unregisterScreen(displayScreen: DisplayScreen) {
+        ConformingWorldMesh.forget(displayScreen.uuid)
         if (displayScreen.virtual) {
             ClientSettingsStore.remove(displayScreen.uuid)
         } else {
             unloadedScreens[displayScreen.uuid] = displayScreen.toFullDisplayData()
             ClientSettingsStore.setSavedTimeNanos(displayScreen.uuid, displayScreen.currentTimeNanos)
-            ClientSettingsStore.setRenderDistance(displayScreen.uuid, displayScreen.renderDistance)
         }
         screens.remove(displayScreen.uuid)
         displayScreen.unregister()
@@ -97,14 +93,15 @@ object DisplayRegistry {
         displaySystem?.clearDisplays()
     }
 
-    /** How long a carried-over display waits to be re-announced by the new server before it is dropped. */
     private const val RECONFIRM_GRACE_MS = 12_000L
-
-    /** Display id -> instant after which an unconfirmed carry-over is torn down. */
     private val awaitingReconfirm = ConcurrentHashMap<UUID, Long>()
 
-    /** Server-switch teardown: world-anchored displays go immediately, popout-active ones held for reconfirm grace. */
-    fun unloadAllForServerSwitch() {
+    /**
+     * Level-change teardown: world-anchored displays go immediately, popout-active ones held for reconfirm grace.
+     * [newBackend] (a proxy moved the player to another server) also forgets the distance-restore cache, whose
+     * entries belong to the previous server and would otherwise reappear at the same coordinates on this one.
+     */
+    fun unloadAllForServerSwitch(newBackend: Boolean) {
         val now = System.currentTimeMillis()
         val carried = mutableSetOf<UUID>()
         for (screen in screens.values.toList()) {
@@ -117,7 +114,7 @@ object DisplayRegistry {
                 unregisterScreen(screen)
             }
         }
-        unloadedScreens.keys.removeAll(carried)
+        if (newBackend) unloadedScreens.clear() else unloadedScreens.keys.removeAll(carried)
         awaitingReconfirm.keys.retainAll(carried)
     }
 
@@ -141,7 +138,6 @@ object DisplayRegistry {
     fun saveScreenData(displayScreen: DisplayScreen) {
         DisplayStorage.saveDisplayData(displayScreen.uuid, displayScreen.toFullDisplayData())
         ClientSettingsStore.setSavedTimeNanos(displayScreen.uuid, displayScreen.currentTimeNanos)
-        ClientSettingsStore.setRenderDistance(displayScreen.uuid, displayScreen.renderDistance)
     }
 
     /** Restores the display snapshot cached for [serverId] (e.g. saved timecodes) from a prior session. */

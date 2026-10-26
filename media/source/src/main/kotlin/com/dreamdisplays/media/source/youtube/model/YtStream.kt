@@ -1,7 +1,7 @@
 package com.dreamdisplays.media.source.youtube.model
 
-import com.dreamdisplays.api.media.stream.model.MediaStream
-import com.dreamdisplays.api.media.stream.model.MediaStreamType
+import com.dreamdisplays.api.media.stream.MediaStream
+import com.dreamdisplays.api.media.stream.MediaStreamType
 import kotlinx.serialization.Serializable
 
 /**
@@ -58,7 +58,6 @@ class YtStream(
         isDefault = false,
     )
 
-    /** Returns a human-readable string representation of the stream, including all available metadata. */
     override fun toString(): String = buildString {
         append("YtStream{").append(mimeType)
         container?.let { append(" container=").append(it) }

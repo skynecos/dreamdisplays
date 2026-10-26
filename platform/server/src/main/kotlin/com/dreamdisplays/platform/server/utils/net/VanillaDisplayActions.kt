@@ -3,17 +3,19 @@ package com.dreamdisplays.platform.server.utils.net
 //? if >=1.21.11 {
 import net.minecraft.server.players.NameAndId
 //?}
+import com.dreamdisplays.api.playback.model.DisplayAccess
 import com.dreamdisplays.api.playback.model.PlaybackAction
 import com.dreamdisplays.api.playback.model.PlaybackMode
-import com.dreamdisplays.api.playback.policy.PlaybackPermissions
+import com.dreamdisplays.shared.playback.PlaybackPermissions
 import com.dreamdisplays.api.playback.model.WatchPartyAction
-import com.dreamdisplays.api.security.policy.MediaUrlPolicy
+import com.dreamdisplays.shared.policy.MediaUrlPolicy
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.platform.server.VanillaServerState
+import com.dreamdisplays.platform.server.api.ServerApiHost
 import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
 import com.dreamdisplays.platform.server.managers.ActionThrottle
 import com.dreamdisplays.platform.server.managers.DisplayManager
 import com.dreamdisplays.platform.server.managers.PlayerManager
-import com.dreamdisplays.platform.server.managers.StateManager
 import com.dreamdisplays.platform.server.meta.ServerCoroutines
 import com.dreamdisplays.platform.server.meta.VersionState
 import com.dreamdisplays.platform.server.playback.PlaybackContexts
@@ -21,6 +23,8 @@ import com.dreamdisplays.platform.server.playback.FullscreenBroadcastManager
 import com.dreamdisplays.platform.server.playback.TimelineManager
 import com.dreamdisplays.platform.server.playback.WatchPartyManager
 import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.VanillaPermissions
 import com.dreamdisplays.platform.server.utils.VersionUtil
 import com.dreamdisplays.platform.server.utils.net.VanillaDisplayActions.context
@@ -28,24 +32,25 @@ import kotlinx.coroutines.launch
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
 import org.semver4j.Semver
+import org.slf4j.LoggerFactory
 
 /**
- * Vanilla Minecraft API packet actions, shared between the frozen v1 receivers registered by
+ * Vanilla Minecraft API packet actions, shared between the receivers registered by
  * [VanillaServerPacketHandler] and the protocol-v2 dispatch in [V2Fabric] / [V2NeoForge]. All
  * business logic is shared by `Fabric` and `NeoForge`.
  */
 object VanillaDisplayActions {
-    /**
-     * Bounds how often one display's video can be changed — each call persists to disk, broadcasts to
-     * every viewer, and makes every viewer's client re-resolve the new URL, so unlike the cheap
-     * per-packet sync state this genuinely amplifies.
-     */
+    private val logger = LoggerFactory.getLogger(javaClass)
     private val setVideoThrottle = ActionThrottle()
     private const val SET_VIDEO_COOLDOWN_MS = 250L
-
-    /** Bounds how often one player may request a catch-up snapshot for one display. */
     private val requestSyncThrottle = ActionThrottle()
     private const val REQUEST_SYNC_COOLDOWN_MS = 250L
+
+    /** Tells a v1-only client that its Dream Displays is too old for this server. */
+    fun notifyOutdatedClient(player: ServerPlayer) {
+        logger.info("${player.name.string} joined with an outdated Dream Displays (protocol v1); asked to update.")
+        ServerMessage.OUTDATED_CLIENT.sendTo(player)
+    }
 
     /** Records the player's reported mod version and runs the mod / plugin update checks. */
     fun recordVersionAndCheckUpdates(player: ServerPlayer, version: String) {
@@ -93,12 +98,12 @@ object VanillaDisplayActions {
         val batchSize = 5
         displays.chunked(batchSize).forEachIndexed { index, batch ->
             if (index == 0) {
-                batch.forEach { VanillaPacketUtil.sendDisplayInfo(listOf(player), it) }
+                batch.forEach { VanillaPacketUtil.sendDisplayInfo([player], it) }
             } else {
                 val delayTicks = (index * 2).toLong()
                 VanillaServerScheduler.runLater(server, delayTicks) {
                     if (server.playerList.players.contains(player)) {
-                        batch.forEach { VanillaPacketUtil.sendDisplayInfo(listOf(player), it) }
+                        batch.forEach { VanillaPacketUtil.sendDisplayInfo([player], it) }
                     }
                 }
             }
@@ -108,21 +113,24 @@ object VanillaDisplayActions {
     /** Handles a client-requested deletion, enforcing owner-or-permission check and physical proximity. */
     fun delete(player: ServerPlayer, server: MinecraftServer, displayId: java.util.UUID) {
         val displayData = DisplayManager.getDisplayData(displayId) as? VanillaDisplayData
-            ?: return MessageUtil.sendMessage(player, "noDisplay")
+            ?: return ServerMessage.NO_DISPLAY.sendTo(player)
 
         val perms = VanillaServerState.config.permissions
-        if (displayData.ownerId != player.uuid &&
-            !VanillaPermissions.has(player, perms.deleteOthers, VanillaPermissions.Fallback.OP)
-        ) {
-            MessageUtil.sendMessage(player, "displayCommandMissingPermission")
+        val canDelete = if (displayData.ownerId == player.uuid) {
+            VanillaPermissions.has(player, perms.delete, VanillaPermissions.Fallback.EVERYONE)
+        } else {
+            VanillaPermissions.has(player, perms.deleteOthers, VanillaPermissions.Fallback.OP)
+        }
+        if (!canDelete) {
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
             return
         }
         if (!DisplayManager.isPlayerInRange(player, displayData)) {
-            return MessageUtil.sendMessage(player, "noDisplay")
+            return ServerMessage.NO_DISPLAY.sendTo(player)
         }
 
         DisplayManager.delete(displayData)
-        MessageUtil.sendMessage(player, "displayDeleted")
+        ServerMessage.DISPLAY_DELETED.sendTo(player)
     }
 
     /** Applies a client-supplied URL / language to a display, broadcasting and resetting the timeline. */
@@ -145,30 +153,32 @@ object VanillaDisplayActions {
         if (!DisplayManager.isPlayerInRange(player, displayData)) return
         if (!setVideoThrottle.tryAcquire(displayId, SET_VIDEO_COOLDOWN_MS)) return
 
-        val videoChanged = displayData.url != url
-        val wasSync = displayData.isSync
+        if (displayData.url != url) VttSubtitleSource.write(displayData.customData, "")
         displayData.url = url
         displayData.lang = MediaUrlPolicy.sanitizeLang(lang)
-        if (videoChanged) displayData.subtitleUrl = ""
         ServerCoroutines.io.launch { VanillaServerState.storage?.saveDisplay(displayData) }
 
         val receivers = DisplayManager.getReceivers(displayData, server)
         VanillaPacketUtil.sendDisplayInfo(receivers, displayData)
-        if (wasSync) StateManager.resetAndBroadcast(displayId, receivers) // Frozen-v1 clock
         TimelineManager.onVideoChanged(displayData)
+        ServerApiHost.current?.urlChanged(displayData)
     }
 
-    /** Updates the locked flag of a display owned by [player] and rebroadcasts. */
-    fun setLocked(player: ServerPlayer, server: MinecraftServer, displayId: java.util.UUID, locked: Boolean) {
+    /** Sets who may use a display owned by [player] and rebroadcasts. */
+    fun setAccess(player: ServerPlayer, server: MinecraftServer, displayId: java.util.UUID, access: DisplayAccess) {
         val displayData = DisplayManager.getDisplayData(displayId) as? VanillaDisplayData
-            ?: return MessageUtil.sendMessage(player, "noDisplay")
+            ?: return ServerMessage.NO_DISPLAY.sendTo(player)
+        if (!VanillaPermissions.has(player, VanillaServerState.config.permissions.lock, VanillaPermissions.Fallback.EVERYONE)) {
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
+            return
+        }
         if (!PlaybackPermissions.canToggleLock(lockContext(displayData, player))) {
-            MessageUtil.sendMessage(player, "displayCommandMissingPermission")
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
             return
         }
         if (!DisplayManager.isPlayerInRange(player, displayData)) return
 
-        displayData.isLocked = locked
+        displayData.access = access
         ServerCoroutines.io.launch { VanillaServerState.storage?.saveDisplay(displayData) }
 
         val receivers = DisplayManager.getReceivers(displayData, server)
@@ -188,7 +198,7 @@ object VanillaDisplayActions {
         if (!PlaybackPermissions.canSetMode(context(displayData, player))) return
 
         if (!canAccessMode(player, mode)) {
-            MessageUtil.sendMessage(player, "displayCommandMissingPermission")
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
             return
         }
         if (!DisplayManager.isPlayerInRange(player, displayData)) return
@@ -210,7 +220,7 @@ object VanillaDisplayActions {
         val displayData = DisplayManager.getDisplayData(displayId) as? VanillaDisplayData ?: return
         val perms = VanillaServerState.config.permissions
         if (!VanillaPermissions.has(player, perms.watchparty, VanillaPermissions.Fallback.EVERYONE)) {
-            MessageUtil.sendMessage(player, "displayCommandMissingPermission")
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
             return
         }
         if (!MediaUrlPolicy.isAllowed(url)) return
@@ -249,23 +259,11 @@ object VanillaDisplayActions {
         TimelineManager.onDurationReported(displayData, player.uuid, durationMs)
     }
 
-    /** Builds the permission context for [player] acting on [display]. */
     private fun context(display: VanillaDisplayData, player: ServerPlayer) =
         PlaybackContexts.of(display, player.uuid, isAdmin(player))
 
-    /** Like [context] but elevates [player] to admin if they hold the lock permission. */
-    private fun lockContext(display: VanillaDisplayData, player: ServerPlayer) =
-        PlaybackContexts.of(
-            display, player.uuid,
-            isAdmin(player) ||
-                    VanillaPermissions.has(
-                        player,
-                        VanillaServerState.config.permissions.lock,
-                        VanillaPermissions.Fallback.OP
-                    ),
-        )
+    private fun lockContext(display: VanillaDisplayData, player: ServerPlayer) = context(display, player)
 
-    /** Checks if [player] has permission to access the specified [mode]. */
     private fun canAccessMode(player: ServerPlayer, mode: PlaybackMode): Boolean {
         val perms = VanillaServerState.config.permissions
         val node = when (mode) {
@@ -277,9 +275,9 @@ object VanillaDisplayActions {
         return VanillaPermissions.has(player, node, VanillaPermissions.Fallback.EVERYONE)
     }
 
-    /** True if [player] counts as a display admin (the `delete` node, or op level 2 without LuckPerms). */
+    /** True if [player] counts as a display admin (the `delete` node, or op level 2 without `LuckPerms`). */
     fun isAdmin(player: ServerPlayer): Boolean =
-        VanillaPermissions.has(player, VanillaServerState.config.permissions.delete, VanillaPermissions.Fallback.OP)
+        VanillaPermissions.has(player, VanillaServerState.config.permissions.deleteOthers, VanillaPermissions.Fallback.OP)
 
     /** True if [player] holds the premium node (op level 2 without LuckPerms, matching legacy behavior). */
     fun isPremium(player: ServerPlayer): Boolean =

@@ -2,7 +2,9 @@ package com.dreamdisplays.platform.client.render
 
 import com.dreamdisplays.platform.client.Initializer
 //? if >=1.21.11 {
+//? if <26.3 {
 import com.mojang.blaze3d.pipeline.RenderPipeline
+//?}
 import net.minecraft.client.renderer.rendertype.RenderSetup
 import net.minecraft.client.renderer.rendertype.RenderType
 import net.minecraft.resources.Identifier
@@ -23,30 +25,37 @@ import net.minecraft.resources.ResourceLocation as Identifier*/
  */
 object DisplayUnlitRenderTypes {
     //? if >=1.21.11 {
-    /** Name of the texture sampler uniform in the display shader. */
     private const val SAMPLER_TEXTURE = "Sampler0"
 
-    /** Lazily-built unlit textured pipeline for display quads. */
     private val texturedPipeline: RenderPipeline by lazy {
         val pipeline = RenderPipelineCompat.createDisplayPipeline(
             Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "pipeline/display_unlit_textured"),
-            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_fog"),
-            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_fog"),
-            listOf(SAMPLER_TEXTURE),
+            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_fog" +
+                //? if >=26.3 {
+                "_rp"
+                //?} else
+                /*""*/),
+            Identifier.fromNamespaceAndPath(Initializer.MOD_ID, "core/display_fog" +
+                //? if >=26.3 {
+                "_rp"
+                //?} else
+                /*""*/),
+            [SAMPLER_TEXTURE],
         )
         assignIrisTexturedProgram(pipeline)
         pipeline
     }
 
     /** Creates an unlit [RenderType] named [name] that samples texture [id]. */
-    fun create(name: String, id: Identifier): RenderType = RenderType.create(
-        name,
-        RenderSetup.builder(texturedPipeline)
-            .withTexture(SAMPLER_TEXTURE, id)
-            .createRenderSetup(),
+    fun create(name: String, id: Identifier): RenderType = DisplaySolidPhase.mark(
+        RenderType.create(
+            name,
+            RenderSetup.builder(texturedPipeline)
+                .withTexture(SAMPLER_TEXTURE, id)
+                .createRenderSetup(),
+        )
     )
 
-    /** Registers [pipeline] with Iris's `TEXTURED` program so shader packs treat it correctly; no-op without Iris. */
     private fun assignIrisTexturedProgram(pipeline: RenderPipeline) {
         runCatching {
             val apiClass = Class.forName("net.irisshaders.iris.api.v0.IrisApi")

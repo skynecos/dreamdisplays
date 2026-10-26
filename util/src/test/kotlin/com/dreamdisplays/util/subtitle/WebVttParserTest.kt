@@ -56,4 +56,13 @@ class WebVttParserTest {
             WebVttParser.parse("00:00:00.000 --> 00:00:01.000\nMerhaba")
         }
     }
+    @Test
+    fun seekBackAndPauseUseTheSuppliedPresentationClockExactly() {
+        val track = WebVttParser.parse("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nFirst\n\n00:00:03.000 --> 00:00:04.000\nSecond")
+        assertEquals(listOf("Second"), track.activeLines(3_500_000_000L))
+        assertEquals(listOf("Second"), track.activeLines(3_500_000_000L))
+        assertEquals(listOf("First"), track.activeLines(1_000_000_000L))
+        assertEquals(emptyList(), track.activeLines(2_000_000_000L))
+        assertEquals(emptyList(), track.activeLines(-1L))
+    }
 }

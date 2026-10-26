@@ -13,13 +13,8 @@ import java.nio.ByteBuffer
  * Java FFM bridge to optional `dreamdisplays_native` Rust library (`FFmpeg`, NV12 -> RGB, brightness).
  */
 object NativeMedia {
-    /** Logger. */
-    private val logger = LoggerFactory.getLogger("DreamDisplays/NativeMedia")
-
-    /** Must match `ABI_VERSION` in `native/src/lib.rs`. */
+    private val logger = LoggerFactory.getLogger(javaClass)
     private const val ABI_VERSION = 1
-
-    /** Must match `LAV_ABI_VERSION` in `native/lav/src/lib.rs`. */
     private const val LAV_ABI_VERSION = 5
 
     const val READ_OK = 0
@@ -66,9 +61,11 @@ object NativeMedia {
     private var videoExitCode: MethodHandle? = null
     private var videoKill: MethodHandle? = null
     private var videoClose: MethodHandle? = null
+    private val nativeProbe = lazy { runCatching { init() }.getOrDefault(false) }
+    private val lavProbe = lazy { isAvailable && runCatching { initLav() }.getOrDefault(false) }
 
     /** True once the library has been located, loaded, bound, and ABI-checked. */
-    val isAvailable: Boolean by lazy { runCatching { init() }.getOrDefault(false) }
+    val isAvailable: Boolean by nativeProbe
 
     /** Machine-readable cause of unavailability (empty when available). */
     @Volatile
@@ -105,7 +102,13 @@ object NativeMedia {
                 && System.getProperty("dreamdisplays.native.libav.zeroCopy", "false").toBoolean()
 
     /** True once the optional `dreamdisplays_lav` library has been located, loaded, and bound. */
-    val lavAvailable: Boolean by lazy { isAvailable && runCatching { initLav() }.getOrDefault(false) }
+    val lavAvailable: Boolean by lavProbe
+
+    /**
+     * True once both library probes have finished, so reading the flags can no longer block. The first probe loads
+     * native libraries and may download `FFmpeg`, so the game thread must check this instead of touching the flags.
+     */
+    val probesFinished: Boolean get() = nativeProbe.isInitialized() && lavProbe.isInitialized()
 
     /** True when `dreamdisplays_lav` exports the additive hardware-surface ABI. */
     val lavSurfaceInteropAvailable: Boolean
@@ -137,10 +140,10 @@ object NativeMedia {
 
     data class LavSurfaceReadResult(val code: Int, val descriptor: LavSurfaceDescriptor?)
 
-    /** Reusable native out-param slot for lavReadFrameI420WithPts (per session, freed in lavClose). */
     private class PtsScratch {
         val arena: Arena = Arena.ofShared()
         val segment: MemorySegment = arena.allocate(ValueLayout.JAVA_LONG)
+        val surfaceDesc: MemorySegment by lazy { arena.allocate(LAV_SURFACE_DESC_BYTES) }
     }
 
     private val ptsScratches = java.util.concurrent.ConcurrentHashMap<Long, PtsScratch>()
@@ -264,14 +267,12 @@ object NativeMedia {
      */
     fun lavReadSurface(handle: Long): LavSurfaceReadResult {
         val readSurface = lavReadSurfaceHandle ?: return LavSurfaceReadResult(READ_UNSUPPORTED, null)
-        Arena.ofConfined().use { arena ->
-            val seg = arena.allocate(LAV_SURFACE_DESC_BYTES)
-            val rc = readSurface.invoke(handle, seg) as Int
-            return LavSurfaceReadResult(
-                rc,
-                if (rc == READ_OK) readLavSurfaceDescriptor(seg) else null,
-            )
-        }
+        val seg = ptsScratches.getOrPut(handle) { PtsScratch() }.surfaceDesc
+        val rc = readSurface.invoke(handle, seg) as Int
+        return LavSurfaceReadResult(
+            rc,
+            if (rc == READ_OK) readLavSurfaceDescriptor(seg) else null,
+        )
     }
 
     /** Imports one retained surface plane into an existing OpenGL texture object. */
@@ -332,10 +333,6 @@ object NativeMedia {
         videoClose!!.invoke(handle)
     }
 
-    /**
-     * Performs the one-time gate checks and binds all downcall handles.
-     * Any failure leaves the bridge unavailable; this must never throw past [isAvailable].
-     */
     private fun init(): Boolean {
         if (!System.getProperty("dreamdisplays.native", "true").toBoolean()) {
             logger.info("Native pipeline disabled via -Ddreamdisplays.native=false.")
@@ -409,11 +406,6 @@ object NativeMedia {
         }
     }
 
-    /**
-     * Binds the optional in-process libav library (`dreamdisplays_lav`). It links FFmpeg
-     * shared libraries, so loading can legitimately fail when they are neither bundled beside
-     * the cdylib nor installed system-wide; any failure just leaves the in-process path unavailable.
-     */
     private fun initLav(): Boolean {
         val lib = locateLibrary(LAV_BASE_NAME) ?: run {
             logger.info("In-process libav library not found; in-process decode unavailable.")
@@ -481,11 +473,6 @@ object NativeMedia {
         }
     }
 
-    /**
-     * Portable LAV bundles may place FFmpeg shared libraries next to `dreamdisplays_lav`.
-     * Loading them first lets Linux resolve SONAMEs from the extracted cache and helps Windows
-     * layouts where DLL search does not include the extracted directory early enough.
-     */
     private fun preloadLavDependencies(dir: File?) {
         if (dir == null || !dir.isDirectory) return
         val libraries =
@@ -552,10 +539,6 @@ object NativeMedia {
         )
     }
 
-    /**
-     * Locates the platform library: explicit `-Ddreamdisplays.native.path`, then the
-     * game-dir cache, then a bundled jar resource extracted into that cache.
-     */
     private fun locateLibrary(baseName: String = LIB_BASE_NAME): File? {
         val explicitPathProperty = when (baseName) {
             LIB_BASE_NAME -> "dreamdisplays.native.path"
@@ -595,7 +578,6 @@ object NativeMedia {
         return null
     }
 
-    /** Platform key matching the layout used by the FFmpeg binary cache. */
     private fun platformKey(): String = when {
         OsInfo.isWindows -> if (OsInfo.isArm) "windows-aarch64" else "windows-x64"
         OsInfo.isMac -> if (OsInfo.isArm) "macos-aarch64" else "macos-x64"

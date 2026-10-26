@@ -1,15 +1,16 @@
 package com.dreamdisplays.platform.client
 
-import com.dreamdisplays.api.runtime.registry.service.getOrNull
+import com.dreamdisplays.core.runtime.getOrNull
 import com.dreamdisplays.core.protocol.common.packets.DreamPacket
 import com.dreamdisplays.platform.client.core.ClientApplication
 import com.dreamdisplays.platform.client.core.ClientLifecycleEvent
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayRegistry
+import com.dreamdisplays.platform.client.input.MouseButtons
 import com.dreamdisplays.platform.client.managers.*
-import com.dreamdisplays.platform.client.net.LegacyAdapter
 import com.dreamdisplays.platform.client.net.ProtocolRouter
 import com.dreamdisplays.platform.client.overlay.OverlayManager
+import com.dreamdisplays.platform.client.render.DisplayYuvRenderTypes
 import com.dreamdisplays.platform.client.ui.FullscreenOverlayManager
 import com.dreamdisplays.platform.client.ui.MinecraftOverlayRenderContext
 import com.dreamdisplays.platform.client.utils.MinecraftScreenUtil
@@ -21,7 +22,6 @@ import net.minecraft.client.gui.GuiGraphicsExtractor
 
 //?} else
 /*import net.minecraft.client.gui.GuiGraphics*/
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import org.slf4j.LoggerFactory
 
 /** Main mod initializer. */
@@ -29,14 +29,10 @@ object Initializer {
     /** The mod identifier, used for channels, resources, and registration. */
     const val MOD_ID: String = "dreamdisplays"
 
-    /** Logger for startup and lifecycle messages. */
-    private val logger = LoggerFactory.getLogger("DreamDisplays/Initializer")
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     /** Called once during mod startup; initializes config, `yt-dlp`, `FFmpeg`, disk cache, and the focuser thread. */
     fun onModInit(dreamDisplaysMod: Mod) {
-        // On macOS, VideoPopoutWindow uses GLFW (not AWT), so no AWT setup is needed.
-        // On Windows / Linux, AWT is used: override java.awt.headless so a JFrame can open.
-        // Must run before any AWT class initializes the Toolkit.
         if (!OsInfo.isMac) {
             System.setProperty("java.awt.headless", "false")
         }
@@ -63,6 +59,13 @@ object Initializer {
      * the per-server flags, and emits [ClientLifecycleEvent.ServerLeft].
      */
     fun onServerLeft() {
+        // Fabric fires its disconnect event on the Netty IO thread
+        val mc = Minecraft.getInstance()
+        if (!mc.isSameThread) { // Not our problem
+            mc.execute(::onServerLeft)
+            return
+        }
+
         val serverId = ClientStateManager.connectedServerId
         DisplayRegistry.saveAllScreens()
         DisplayRegistry.unloadAll()
@@ -77,9 +80,9 @@ object Initializer {
         }
     }
 
-    /** Lifts an incoming frozen-v1 [payload] into its v2 packet and dispatches it. */
-    fun onLegacyPacket(payload: CustomPacketPayload) {
-        ProtocolRouter.onLegacyReceived(LegacyAdapter.fromLegacy(payload))
+    /** A v1-only reply arrived: the server's `Dream Displays` is too old to use. */
+    fun onLegacyServerDetected() {
+        ProtocolRouter.onLegacyServerDetected()
     }
 
     /** Decodes and dispatches v2 envelope [bytes] from the `dreamdisplays:v2` channel. */
@@ -92,6 +95,7 @@ object Initializer {
      * handles the right-click shortcut, and applies focus-mode blindness.
      */
     fun onEndTick(minecraft: Minecraft) {
+        DisplayYuvRenderTypes.solidColorType()
         ClientTickManager.tick(minecraft)
     }
 
@@ -106,8 +110,23 @@ object Initializer {
         graphics.nextStratum()
         //?}
         FullscreenOverlayManager.renderAll(mc, graphics, partialTick)
+        val window = mc.window
+        val mouse = mc.mouseHandler
         DreamServices.registry.getOrNull<OverlayManager>()
-            ?.renderAll(MinecraftOverlayRenderContext(mc, graphics, -1, -1, false, partialTick))
+            ?.renderAll(
+                MinecraftOverlayRenderContext(
+                    mc,
+                    graphics,
+                    //? if >=1.21.11 {
+                    mouse.getScaledXPos(window).toInt(),
+                    mouse.getScaledYPos(window).toInt(),
+                    //?} else
+                    /*(mouse.xpos() * window.guiScaledWidth / window.screenWidth).toInt(),
+                    (mouse.ypos() * window.guiScaledHeight / window.screenHeight).toInt(),*/
+                    MouseButtons.hardwareLeftDown(),
+                    partialTick,
+                )
+            )
     }
 
     /** Routes an outgoing [packet] through protocol negotiation (v2 when available, else v1). */

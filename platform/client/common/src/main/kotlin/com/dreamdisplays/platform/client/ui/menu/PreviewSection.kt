@@ -7,10 +7,11 @@ import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.resources.Identifier
 //?} else
 /*import net.minecraft.resources.ResourceLocation as Identifier*/
-import com.dreamdisplays.api.media.service.keys.MediaServices
-import com.dreamdisplays.api.media.source.url.CustomMediaUrls
-import com.dreamdisplays.api.media.source.model.MediaPlatform
-import com.dreamdisplays.api.media.source.model.MediaSource
+import com.dreamdisplays.core.services.keys.MediaServices
+import com.dreamdisplays.platform.client.ui.ClientMessage
+import com.dreamdisplays.api.media.source.CustomMediaUrls
+import com.dreamdisplays.api.media.source.MediaPlatform
+import com.dreamdisplays.api.media.source.MediaSource
 import com.dreamdisplays.media.source.bilibili.BilibiliMetadataCache
 import com.dreamdisplays.media.source.kick.KickMetadataCache
 import com.dreamdisplays.media.source.platform.PlatformVideoMetadata
@@ -49,10 +50,12 @@ class PreviewSection(
     private val volume: ValueSlider,
     private val popoutButton: IconButton,
     private val audioTrackButton: IconButton,
+    private val subtitleButton: IconButton,
     private val pauseButton: IconButton,
     private val progress: SeekBar,
     private val dropdown: PopoutDropdown,
     private val audioTrackDropdown: AudioTrackDropdown,
+    private val subtitleDropdown: SubtitleDropdown,
 ) {
     // Owned by DisplayScreen (not this section) so the last decoded frame — and its GPU texture —
     // survive closing and reopening the menu instead of needing a fresh push before showing anything.
@@ -65,13 +68,11 @@ class PreviewSection(
     // grow-in animation even when the track count was already known and settled from a previous
     // session, which reads as the menu "always refreshing" something that hasn't actually changed.
     private var audioPresence = if (ds.audioTrackList.size > 1) 1f else 0f
+    private var subtitlePresence = if (ds.subtitleTrackList.isNotEmpty()) 1f else 0f
     private var lastPresenceFrameNanos = 0L
 
     companion object {
-        /** Aspect ratio of a YouTube thumbnail image, independent of the screen's own block shape. */
         private const val THUMBNAIL_RATIO = 16f / 9f
-
-        /** Width of the volume slider in the controls row. */
         private const val VOLUME_W = 76
     }
 
@@ -99,7 +100,12 @@ class PreviewSection(
         audioPresence += diff * minOf(1f, dt * 10f)
         if (diff in -0.002f..0.002f) audioPresence = target
 
-        // Controls row: [mute][volume] [progress........] [audio][popout][pause]
+        val subtitleTarget = if (ds.subtitleTrackList.isNotEmpty()) 1f else 0f
+        val subtitleDiff = subtitleTarget - subtitlePresence
+        subtitlePresence += subtitleDiff * minOf(1f, dt * 10f)
+        if (subtitleDiff in -0.002f..0.002f) subtitlePresence = subtitleTarget
+
+        // Controls row: [mute][volume] [progress........] [subtitles][audio][popout][pause]
         muteButton.place(UiRect(innerX, controlsRowY, btn, btn))
         val volumeX = innerX + btn + 4
         volume.place(UiRect(volumeX, controlsRowY, VOLUME_W, btn))
@@ -113,8 +119,15 @@ class PreviewSection(
         audioTrackButton.place(UiRect(audioBtnLeft, controlsRowY, audioBtnW, btn))
         audioTrackButton.setAlpha(audioPresence)
 
+        val subtitleSlotRight = audioBtnLeft - audioGap
+        val subtitleBtnW = (btn * subtitlePresence).roundToInt()
+        val subtitleGap = (4 * subtitlePresence).roundToInt()
+        val subtitleBtnLeft = subtitleSlotRight - subtitleBtnW
+        subtitleButton.place(UiRect(subtitleBtnLeft, controlsRowY, subtitleBtnW, btn))
+        subtitleButton.setAlpha(subtitlePresence)
+
         val progX = volumeX + VOLUME_W + 4
-        val progW = max(40, (audioBtnLeft - audioGap) - progX)
+        val progW = max(40, (subtitleBtnLeft - subtitleGap) - progX)
         progress.place(UiRect(progX, controlsRowY, progW, btn))
 
         dropdown.draw(g, popoutButton.x + btn / 2, popoutButton.y, mouseX, mouseY)
@@ -122,9 +135,10 @@ class PreviewSection(
         // drifts or jitters while the button is still easing in.
         val audioBtnFinalCenterX = audioSlotRight - btn / 2
         if (audioPresence > 0.01f) audioTrackDropdown.draw(g, audioBtnFinalCenterX, controlsRowY, mouseX, mouseY)
+        val subtitleBtnFinalCenterX = subtitleSlotRight - btn / 2
+        if (subtitlePresence > 0.01f) subtitleDropdown.draw(g, subtitleBtnFinalCenterX, controlsRowY, mouseX, mouseY)
     }
 
-    /** Draws the letterboxed video frame, or the dimmed thumbnail while loading. */
     private fun drawVideoArea(g: GuiGraphicsCompat, x: Int, y: Int, w: Int, h: Int) {
         if (ds.videoUrl != lastVideoUrl) {
             lastVideoUrl = ds.videoUrl
@@ -170,11 +184,6 @@ class PreviewSection(
         }
     }
 
-    /**
-     * Attaches the single preview-frame sink shared by the full YUV preview texture (only relevant
-     * while [DisplayScreen.isYuvTexture]) and the ambient sampler (relevant for every playing video,
-     * regardless of which texture path is actually rendered on screen).
-     */
     private fun attachFrameSink() {
         if (frameSinkAttached) return
         frameSinkAttached = true
@@ -190,7 +199,6 @@ class PreviewSection(
         ds.setPreviewFrameSink(null)
     }
 
-    /** Returns the largest box with aspect ratio [ratio] that fits inside [area], centered. */
     private fun fitRatio(area: UiRect, ratio: Float): UiRect {
         val w: Int
         val h: Int
@@ -202,11 +210,6 @@ class PreviewSection(
         return area.centered(w, h)
     }
 
-    /**
-     * The decode pipeline pads every frame to the display's own block aspect ratio (its GPU texture
-     * is allocated at that shape), so a wide / narrow block display bakes black bars into the texture
-     * pixels themselves.
-     */
     private fun contentRect(frameW: Int, frameH: Int, contentAspect: Double): UiRect {
         if (frameW <= 0 || frameH <= 0 || contentAspect <= 0.0 || !contentAspect.isFinite()) {
             return UiRect(0, 0, frameW, frameH)
@@ -221,7 +224,6 @@ class PreviewSection(
         }
     }
 
-    /** Like [blitTexture], but crops the block-shape padding out of a [texW] x [texH] decode texture first. */
     private fun blitVideoTexture(
         g: GuiGraphicsCompat,
         id: Identifier,
@@ -253,8 +255,6 @@ class PreviewSection(
         g.flush()*/
     }
 
-    /** Draws the dimmed thumbnail (or shimmer, or plain backdrop) while no frame is ready yet. The
-     *  "Waiting for video..." status text itself lives on the seek bar instead (see [SeekBar]). */
     private fun drawWaiting(g: GuiGraphicsCompat, area: UiRect) {
         // YouTube thumbnails are always 16:9, regardless of the screen's own block shape.
         val box = fitRatio(area, THUMBNAIL_RATIO)
@@ -279,7 +279,6 @@ class PreviewSection(
         }
     }
 
-    /** The custom-link stand-in for a thumbnail: a soft plate naming the host the video comes from. */
     private fun drawCustomBackdrop(g: GuiGraphicsCompat, box: UiRect) {
         val font = Minecraft.getInstance().font
         g.fillVGradient(box.x, box.y, box.right, box.bottom, UiTheme.CUSTOM_ART_TOP, UiTheme.CUSTOM_ART_BOTTOM)
@@ -292,7 +291,6 @@ class PreviewSection(
         )
     }
 
-    /** Generic overlay text resolved for the current display URL, regardless of provider. */
     private data class OverlayInfo(
         val title: String?,
         val uploader: String?,
@@ -305,11 +303,6 @@ class PreviewSection(
         val platform: MediaPlatform,
     )
 
-    /**
-     * Resolves [OverlayInfo] for the current display URL: YouTube via [VideoMetadataCache], Twitch
-     * via [TwitchMetadataCache], Vimeo / Kick via their platform caches, and a bare file / long-tail
-     * link from the URL alone.
-     */
     private fun overlayInfo(): OverlayInfo {
         when (val source = currentSource()) {
             is MediaSource.Twitch -> {
@@ -373,7 +366,6 @@ class PreviewSection(
         }
     }
 
-    /** [OverlayInfo] for a Vimeo / Kick video from its [PlatformVideoMetadata]. */
     private fun platformOverlayInfo(url: String, platform: MediaPlatform, meta: PlatformVideoMetadata?): OverlayInfo =
         OverlayInfo(
             title = meta?.title ?: CustomMediaUrls.displayName(url),
@@ -387,7 +379,6 @@ class PreviewSection(
             platform = platform,
         )
 
-    /** [OverlayInfo] for a custom link: file name as the title, host in place of a channel. */
     private fun customOverlayInfo(url: String): OverlayInfo = OverlayInfo(
         title = CustomMediaUrls.displayName(url),
         uploader = CustomMediaUrls.hostOf(url),
@@ -400,14 +391,12 @@ class PreviewSection(
         platform = MediaPlatform.DIRECT,
     )
 
-    /** Formats a viewer / view count, labelling it "watching" while live and "views" otherwise. */
     private fun watchOrViewCount(count: Long?, isLive: Boolean): String = count?.let {
         formatCompactCount(it) + " " + Component.translatable(
-            if (isLive) "dreamdisplays.ui.watching" else "dreamdisplays.ui.views_short",
+            if (isLive) ClientMessage.UI_WATCHING.key else ClientMessage.UI_VIEWS_SHORT.key,
         ).string
     } ?: ""
 
-    /** Draws the dark strip with the video title (+NEW tag) and channel / views / likes / date metadata. */
     private fun drawTitleOverlay(g: GuiGraphicsCompat, x: Int, y: Int, w: Int) {
         val font = Minecraft.getInstance().font
         val info = overlayInfo()
@@ -431,7 +420,7 @@ class PreviewSection(
         val badge = PlatformBadge.forPlatform(info.platform)
         val tagText = when {
             badge != null -> Component.translatable(badge.labelKey).string
-            info.isNew -> Component.translatable("dreamdisplays.ui.new").string
+            info.isNew -> ClientMessage.UI_NEW.component().string
             else -> null
         }
         if (tagText != null) {
@@ -453,7 +442,7 @@ class PreviewSection(
         }
         if (info.likes.isNotEmpty()) {
             if (parts.isNotEmpty()) parts.append(" • ")
-            parts.append(info.likes).append(" ").append(Component.translatable("dreamdisplays.ui.likes").string)
+            parts.append(info.likes).append(" ").append(ClientMessage.UI_LIKES.component().string)
         }
         if (!info.published.isNullOrEmpty()) {
             if (parts.isNotEmpty()) parts.append(" • ")
@@ -492,7 +481,6 @@ class PreviewSection(
         )
     }
 
-    /** Formats [v] compactly (e.g. "1.2M"), or its plain value below 1000. */
     private fun formatCompactCount(v: Long): String = when {
         v >= 1_000_000_000L -> String.format("%.1fB", v / 1_000_000_000.0)
         v >= 1_000_000L -> String.format("%.1fM", v / 1_000_000.0)
@@ -505,7 +493,6 @@ class PreviewSection(
     private var sourceUrl: String? = null
     private var sourceCache: MediaSource? = null
 
-    /** The [MediaSource] for the display's current URL, or null when there's none set. */
     private fun currentSource(): MediaSource? {
         val url = ds.videoUrl?.takeIf { it.isNotEmpty() } ?: return null
         if (url != sourceUrl) {
@@ -515,7 +502,6 @@ class PreviewSection(
         return sourceCache
     }
 
-    /** Cache key for the current source's thumbnail/metadata: a YouTube id, or a platform composite key. */
     private fun currentThumbnailKey(): String? = when (val source = currentSource()) {
         is MediaSource.Twitch -> TwitchMetadataCache.cacheKey(source)
         is MediaSource.Vimeo -> VimeoMetadataCache.cacheKey(source)
@@ -525,7 +511,6 @@ class PreviewSection(
         else -> null
     }
 
-    /** Requests the thumbnail download for the current source once its metadata (and thumbnail URL) is ready. */
     private fun requestCurrentThumbnail() {
         when (val source = currentSource()) {
             is MediaSource.Twitch -> {
@@ -579,7 +564,6 @@ class PreviewSection(
         }
     }
 
-    /** Returns the cached thumbnail for the current video, requesting it asynchronously if absent. */
     private fun currentThumbnail(): Identifier? {
         val id = currentThumbnailKey() ?: return null
         Thumbnails.get(id)?.let { return it }
@@ -606,12 +590,10 @@ class PreviewSection(
         @Volatile
         private var target: AmbientGrid.Grid? = null
         private var lastSampleNanos = 0L
-
         private var currentR: FloatArray? = null
         private var currentG: FloatArray? = null
         private var currentB: FloatArray? = null
         private var lastUploadNanos = 0L
-
         private var rgbaBuf: ByteBuffer = EMPTY_DIRECT
         private var dynamicTexture: DynamicTexture? = null
         var textureId: Identifier? = null
@@ -715,8 +697,6 @@ class PreviewSection(
         companion object {
             private val EMPTY_DIRECT: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
             private const val SAMPLE_INTERVAL_NS = 1_500_000_000L
-
-            /** Time constant of the exponential ease toward each newly sampled target — bigger = slower, calmer drift. */
             private const val SMOOTH_TAU_SECONDS = 2.5f
         }
     }

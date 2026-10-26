@@ -2,7 +2,9 @@
 package com.dreamdisplays.platform.client.render
 
 import com.mojang.blaze3d.systems.RenderSystem
+//? if <26.3 {
 import com.mojang.blaze3d.textures.GpuTexture
+//?}
 import net.minecraft.client.renderer.texture.AbstractTexture
 
 /**
@@ -17,7 +19,6 @@ class VideoPlaneTexture(label: String, width: Int, height: Int) : AbstractTextur
         sampler = DisplayYuvRenderTypes.planeSampler()
     }
 
-    /** Reflectively creates a `RED8` GPU texture of [width] x [height] (handles the 26.2+ format rename). */
     private fun createRed8Texture(device: Any, label: String, width: Int, height: Int): GpuTexture {
         val textureFormatClass = Class.forName("com.mojang.blaze3d.textures.TextureFormat")
 

@@ -1,6 +1,6 @@
 package com.dreamdisplays.platform.server.storage
 
-import com.dreamdisplays.api.storage.model.FullDisplayData
+import com.dreamdisplays.shared.storage.DisplayData
 import com.dreamdisplays.core.services.DisplayStorage
 import com.dreamdisplays.util.json.JsonFileStore
 import kotlinx.serialization.builtins.MapSerializer
@@ -11,23 +11,22 @@ import java.security.MessageDigest
 import java.util.*
 
 /**
- * In-memory registry and JSON persistence for the server-authoritative [FullDisplayData] of every display,
+ * In-memory registry and JSON persistence for the server-authoritative [DisplayData] of every display,
  * keyed by server id and stored in `server-{serverId}-displays.json`.
  *
  * The "current" server is set by [load]; lookups and per-display saves operate against it.
  */
 object ServerDisplayStore {
-    /** Logger. */
-    private val logger = LoggerFactory.getLogger("DreamDisplays/ServerDisplayStore")
+    private val logger = LoggerFactory.getLogger(javaClass)
     private const val SCHEMA_VERSION = 1
     private val jsonFiles = JsonFileStore()
-    private val displayMapSerializer = MapSerializer(String.serializer(), FullDisplayData.serializer())
+    private val displayMapSerializer = MapSerializer(String.serializer(), DisplayData.serializer())
 
     /** Loads the display registry for [serverId] from disk and marks it as the current server. */
     fun load(serverId: String) {
-        val loaded: Map<String, FullDisplayData>? =
+        val loaded: Map<String, DisplayData>? =
             jsonFiles.readVersioned(readableServerFile(serverId), displayMapSerializer, SCHEMA_VERSION, logger)
-        val displays = HashMap<UUID, FullDisplayData>()
+        val displays = HashMap<UUID, DisplayData>()
         loaded?.forEach { (key, value) ->
             runCatching { displays[UUID.fromString(key)] = value }
                 .onFailure { logger.error("Invalid UUID in server displays: $key.") }
@@ -44,11 +43,11 @@ object ServerDisplayStore {
         jsonFiles.writeVersioned(safeServerFile(serverId), displayMapSerializer, toSave, SCHEMA_VERSION, logger)
     }
 
-    /** Returns the cached [FullDisplayData] for [displayUuid] on the current server, or null if absent. */
-    fun getDisplayData(displayUuid: UUID): FullDisplayData? = DisplayStorage.getDisplayData(displayUuid)
+    /** Returns the cached [DisplayData] for [displayUuid] on the current server, or null if absent. */
+    fun getDisplayData(displayUuid: UUID): DisplayData? = DisplayStorage.getDisplayData(displayUuid)
 
     /** Stores [data] for [displayUuid] in the current server's registry and persists it to disk. */
-    fun saveDisplayData(displayUuid: UUID, data: FullDisplayData) {
+    fun saveDisplayData(displayUuid: UUID, data: DisplayData) {
         DisplayStorage.saveDisplayData(displayUuid, data)
         DisplayStorage.currentServerId()?.let(::save)
     }
@@ -60,21 +59,15 @@ object ServerDisplayStore {
         return removed
     }
 
-    /**
-     * Returns the file to read the display registry for [serverId], preferring the safe hashed filename but
-     * falling back to the legacy one for backwards compatibility.
-     */
     private fun readableServerFile(serverId: String): File {
         val safe = safeServerFile(serverId)
         val legacy = jsonFiles.file("server-$serverId-displays.json")
         return if (safe.exists() || !legacy.exists()) safe else legacy
     }
 
-    /** Returns the file to write the display registry for [serverId], using a safe hashed filename. */
     private fun safeServerFile(serverId: String): File =
         jsonFiles.file("server-${safeServerFileId(serverId)}-displays.json")
 
-    /** Returns a safe filename component for [serverId] based on its lowercased slug and SHA-256 hash. */
     private fun safeServerFileId(serverId: String): String {
         val slug = serverId
             .lowercase(Locale.ROOT)

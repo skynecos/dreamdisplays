@@ -1,6 +1,6 @@
 package com.dreamdisplays.platform.client.mixins
 
-import com.dreamdisplays.api.runtime.registry.service.getOrNull
+import com.dreamdisplays.core.runtime.getOrNull
 import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.managers.ClientStateManager
 import com.dreamdisplays.platform.client.overlay.CrosshairPolicy
@@ -19,7 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo
 /** Mixin that suppresses crosshair rendering while the player is looking at a display screen. */
 @Suppress("NonJavaMixin")
 @Pseudo
-//? if >=26 {
+//? if >=26.2 {
 @Mixin(targets = ["net.minecraft.client.gui.Hud"])
 //?} else
 /*@Mixin(targets = ["net.minecraft.client.gui.Gui"])*/

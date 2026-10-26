@@ -5,7 +5,8 @@ import com.dreamdisplays.platform.server.PaperServer
 import com.dreamdisplays.platform.server.VanillaServerState
 import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
 import com.dreamdisplays.platform.server.managers.DisplayManager
-import com.dreamdisplays.platform.server.utils.MessageUtil
+import com.dreamdisplays.platform.server.utils.ServerMessage
+import com.dreamdisplays.platform.server.utils.sendTo
 import com.dreamdisplays.platform.server.utils.VanillaPermissions
 import com.dreamdisplays.platform.server.utils.net.VanillaPacketUtil
 import com.mojang.brigadier.context.CommandContext
@@ -20,36 +21,32 @@ import org.bukkit.entity.Player
  * Handles the `/display delete` command. Used for deleting displays the player is currently looking at.
  * Players can delete their own displays; deleting others' requires the `delete.others` permission.
  */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
 @PaperOnly
 class DeleteCommand : SubCommand {
     override val name = "delete"
     override val permission: String? = null
     override val playerOnly = true
 
-    /** Deletes the display named by `this` (looked-at, within 32 blocks) or a remote id / prefix. */
     override fun execute(sender: CommandSender, args: Array<String?>) {
         val player = (sender as? Player) ?: return
         val token = args.getOrNull(0) ?: "this"
 
         val data = resolvePaperDisplayTarget(sender, player, token) ?: return
 
-        if (data.ownerId != player.uniqueId &&
-            !player.hasPermission(PaperServer.config.permissions.deleteOthers)
-        ) {
-            MessageUtil.sendMessage(player, "displayCommandMissingPermission")
+        val isOwner = data.ownerId == player.uniqueId
+        val canDelete = player.hasPermission(PaperServer.config.permissions.deleteOthers) ||
+                (isOwner && player.hasPermission(PaperServer.config.permissions.delete))
+        if (!canDelete) {
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
             return
         }
 
         DisplayManager.delete(data.id)
-        MessageUtil.sendMessage(player, "displayDeleted")
+        ServerMessage.DISPLAY_DELETED.sendTo(player)
     }
 }
 
-/**
- * Shared `Fabric` / `NeoForge` implementation of the `/display delete` command.
- */
-@Deprecated("This command is being replaced by UI interface. Will be removed in a future update.")
+/** Shared `Fabric` / `NeoForge` implementation of the `/display delete` command. */
 @ModLoaderOnly
 object VanillaDeleteCommand {
     /** Deletes the display named by `this` (looked-at, within 32 blocks) or a remote id/prefix. */
@@ -59,21 +56,25 @@ object VanillaDeleteCommand {
 
         val data = resolveVanillaDisplayTarget(player, token) as? VanillaDisplayData ?: return 0
 
-        if (data.ownerId != player.uuid &&
-            !VanillaPermissions.has(
-                player,
-                VanillaServerState.config.permissions.deleteOthers,
-                VanillaPermissions.Fallback.OP
-            )
-        ) {
-            MessageUtil.sendMessage(player, "displayCommandMissingPermission")
+        val isOwner = data.ownerId == player.uuid
+        val canDelete = VanillaPermissions.has(
+            player,
+            VanillaServerState.config.permissions.deleteOthers,
+            VanillaPermissions.Fallback.OP
+        ) || (isOwner && VanillaPermissions.has(
+            player,
+            VanillaServerState.config.permissions.delete,
+            VanillaPermissions.Fallback.EVERYONE
+        ))
+        if (!canDelete) {
+            ServerMessage.DISPLAY_COMMAND_MISSING_PERMISSION.sendTo(player)
             return 0
         }
 
         val receivers = DisplayManager.getReceivers(data, ctx.source.server)
         DisplayManager.delete(data)
         VanillaPacketUtil.sendDelete(receivers, data.id)
-        MessageUtil.sendMessage(player, "displayDeleted")
+        ServerMessage.DISPLAY_DELETED.sendTo(player)
         return 1
     }
 }
