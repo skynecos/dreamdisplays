@@ -8,6 +8,7 @@ import com.dreamdisplays.core.protocol.common.packets.DisplayDelete
 import com.dreamdisplays.core.protocol.common.packets.DisplayInfo
 import com.dreamdisplays.core.protocol.common.packets.SetDisplaysEnabled
 import com.dreamdisplays.platform.server.managers.PlayerManager
+import com.dreamdisplays.platform.server.media.LocalVttServer
 import io.github.arnodoelinger.platformweaver.PaperOnly
 import org.bukkit.block.BlockFace
 import org.bukkit.entity.Player
@@ -94,7 +95,7 @@ object PacketUtil {
             scheduledStartEpochMillis = scheduledStartEpochMillis, scheduledAction = scheduledAction,
             access = access.wire, inRegion = inRegion,
             depth = depth.coerceAtLeast(1), conforming = conforming,
-            customData = customData,
+            customData = LocalVttServer.forClients(customData),
         )
         if (access == DisplayAccess.REGION && isRegionMember != null) {
             recipients.forEach { player ->

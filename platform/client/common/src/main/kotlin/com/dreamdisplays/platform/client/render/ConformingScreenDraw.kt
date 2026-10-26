@@ -1,5 +1,6 @@
 package com.dreamdisplays.platform.client.render
 
+import com.dreamdisplays.platform.client.storage.ClientSettingsStore
 import com.dreamdisplays.shared.geometry.ConformQuad
 import com.dreamdisplays.shared.geometry.ConformVertex
 import com.dreamdisplays.shared.geometry.clipToUvRect
@@ -20,7 +21,6 @@ import kotlin.math.sin
 internal object ConformingScreenDraw {
     private const val SUBTITLE_MAX_HEIGHT_FRAC = 0.16f
     private const val SUBTITLE_MAX_WIDTH_FRAC = 0.86f
-    private const val SUBTITLE_BOTTOM_MARGIN_FRAC = 0.05f
     private const val OVERLAY_LIFT = 0.002f
 
     private class Clip(val source: List<ConformQuad>, val rect: FloatArray, val pieces: List<ConformQuad>)
@@ -47,6 +47,7 @@ internal object ConformingScreenDraw {
         quads: List<ConformQuad>,
         lift: Float,
         drawQuad: (RenderType, (PoseStack.Pose, VertexConsumer) -> Unit) -> Unit,
+        renderSubtitles: Boolean = true,
     ) {
         if (quads.isEmpty()) return
         val clearance = DisplayPoseStack.surfaceClearance() + lift
@@ -55,7 +56,7 @@ internal object ConformingScreenDraw {
             val base = if (screen.isYuvTexture) screen.brightness.coerceIn(0f, 1f) * 255f else 255f
             val color = (base * appear).toInt().coerceIn(0, 255)
             draw(drawQuad, screen.renderType!!, quads, clearance, color, color, color)
-            drawSubtitle(screen, quads, clearance, drawQuad)
+            if (renderSubtitles) drawSubtitle(screen, quads, clearance, drawQuad)
         } else {
             drawPlaceholder(screen, quads, clearance, drawQuad)
         }
@@ -68,9 +69,10 @@ internal object ConformingScreenDraw {
         drawQuad: (RenderType, (PoseStack.Pose, VertexConsumer) -> Unit) -> Unit,
     ) {
         val overlay = screen.subtitleOverlayTexture()
-        overlay.update(if (screen.subtitlesEnabled) screen.currentSubtitleText else null)
+        val personal = ClientSettingsStore.getSettings(screen.uuid)
+        overlay.update(if (screen.subtitlesEnabled) screen.activeSubtitleLines.joinToString("\n") else null, personal)
         val type = overlay.renderType() ?: return
-        var unitH = SUBTITLE_MAX_HEIGHT_FRAC
+        var unitH = SUBTITLE_MAX_HEIGHT_FRAC * screen.subtitleScale.coerceIn(0.5f, 2f)
         var unitW = unitH * (screen.height.toFloat() / screen.width.toFloat()) * overlay.aspectRatio
         if (unitW > SUBTITLE_MAX_WIDTH_FRAC) {
             unitW = SUBTITLE_MAX_WIDTH_FRAC
@@ -78,8 +80,9 @@ internal object ConformingScreenDraw {
         }
         val u0 = 0.5f - unitW / 2f
         val u1 = 0.5f + unitW / 2f
-        val texV1 = 1f - SUBTITLE_BOTTOM_MARGIN_FRAC
-        val texV0 = 1f - (SUBTITLE_BOTTOM_MARGIN_FRAC + unitH)
+        val bottomMargin = 0.03f + 0.30f * screen.subtitleVerticalPosition.coerceIn(0f, 1f)
+        val texV1 = 1f - bottomMargin
+        val texV0 = 1f - (bottomMargin + unitH)
         val pieces = clipped(screen, SLOT_SUBTITLE, quads, u0, texV0, u1, texV1)
             .map { quad ->
                 quad.mapUv { u, v ->

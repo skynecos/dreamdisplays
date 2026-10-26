@@ -58,6 +58,7 @@ internal fun DisplayScreen.toFullDisplayData(): DisplayData = DisplayData(
     depth = depth,
     conforming = conforming,
     videoUrl = videoUrl ?: "",
+    subtitleUrl = subtitleUrl,
     lang = lang ?: "",
     volume = volume,
     quality = quality.serialize(),

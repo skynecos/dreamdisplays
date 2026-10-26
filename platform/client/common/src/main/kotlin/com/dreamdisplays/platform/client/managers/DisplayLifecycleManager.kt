@@ -6,6 +6,7 @@ import com.dreamdisplays.core.services.keys.MediaServices
 import com.dreamdisplays.api.media.model.VideoQuality
 import com.dreamdisplays.api.media.source.MediaSource
 import com.dreamdisplays.api.playback.model.PlaybackMode
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.shared.storage.DisplayData
 import com.dreamdisplays.core.protocol.common.packets.DisplayInfo
 import com.dreamdisplays.core.services.DisplayStorage
@@ -96,6 +97,7 @@ object DisplayLifecycleManager {
             width = packet.width, height = packet.height,
             depth = packet.depth, conforming = packet.conforming,
             videoUrl = packet.url, lang = packet.lang,
+            subtitleUrl = VttSubtitleSource.read(packet.customData),
             volume = settings.volume, quality = settings.quality, brightness = settings.brightness,
             muted = settings.muted, mode = mode, ownerUuid = packet.ownerId,
             currentTimeNanos = settings.savedTimeNanos,
@@ -193,6 +195,7 @@ object DisplayLifecycleManager {
             dimensionKey = data.dimensionKey.ifEmpty { currentDimensionKey() },
             depth = data.depth.coerceAtLeast(1), conforming = data.conforming,
         )
+        displayScreen.setSubtitleSource(data.subtitleUrl)
         displayScreen.savedTimeNanos = data.currentTimeNanos
         displayScreen.volume = data.volume
         displayScreen.quality = VideoQuality.parse(data.quality)

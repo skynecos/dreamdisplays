@@ -9,6 +9,7 @@ import com.dreamdisplays.platform.server.datatypes.display.PaperDisplayData
 import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
 import com.dreamdisplays.platform.server.storage.CustomDataCodec
 import com.dreamdisplays.platform.server.storage.IsolatedSqliteDataSource
+import com.dreamdisplays.platform.server.storage.LegacySubtitleMigration
 import com.dreamdisplays.platform.server.storage.StorageBackend
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.DIRECTION_TO_ORDINAL
 import com.dreamdisplays.platform.server.utils.StoragePackingUtil.ORDINAL_TO_DIRECTION
@@ -133,6 +134,7 @@ class StorageManager(
 ) {
     private val logger: Logger = LoggerFactory.getLogger(javaClass)
     private val table = DisplaysTable(tablePrefix)
+    private val legacyMediaDirectory = File(dataDir, "media").toPath()
 
     private val jdbcUrl = when (backend) {
         StorageBackend.SQLITE -> "jdbc:sqlite:${File(dataDir, "dreamdisplays.db").absolutePath}"
@@ -165,6 +167,18 @@ class StorageManager(
             MigrationUtils.statementsRequiredForDatabaseMigration(table)
                 .filterNot { it.contains("DROP COLUMN", ignoreCase = true) }
                 .forEach { stmt -> exec(stmt) }
+        }
+        dataSource.connection.use { connection ->
+            try {
+                val imported = LegacySubtitleMigration.migrate(connection, table.tableName) { source ->
+                    LegacySubtitleMigration.validLegacySource(source, legacyMediaDirectory)
+                }
+                connection.commit()
+                if (imported > 0) logger.info("Imported {} existing WebVTT subtitle sources.", imported)
+            } catch (error: Exception) {
+                connection.rollback()
+                throw error
+            }
         }
     }
 

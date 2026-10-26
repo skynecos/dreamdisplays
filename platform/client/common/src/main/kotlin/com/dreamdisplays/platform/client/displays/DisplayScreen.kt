@@ -8,6 +8,8 @@ import net.minecraft.client.renderer.rendertype.RenderType
 import net.minecraft.resources.Identifier
 //?} else
 /*import net.minecraft.resources.ResourceLocation as Identifier*/
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
+import com.dreamdisplays.platform.client.subtitles.WebVttController
 import com.dreamdisplays.shared.capability.ServerFeature
 import com.dreamdisplays.api.display.model.property.DisplayRotation
 import com.dreamdisplays.api.display.model.property.DisplayFacing
@@ -61,6 +63,8 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.tan
+
+internal const val EXTERNAL_SUBTITLE_TRACK = "kirazium:vtt"
 
 /** Represents a video display screen in the game world. */
 class DisplayScreen(
@@ -333,12 +337,15 @@ class DisplayScreen(
         set(value) {
             field = value
             pendingSubtitleLangRestore = null
-            mediaPlayer?.setSubtitleTrack(value)
+            savedSettings.subtitleSource = when (value) { EXTERNAL_SUBTITLE_TRACK -> "external"; null -> "off"; else -> "provider" }
+            if (value == EXTERNAL_SUBTITLE_TRACK) savedSettings.externalSubtitlesEnabled = true
+            mediaPlayer?.setSubtitleTrack(value.takeUnless { it == EXTERNAL_SUBTITLE_TRACK })
         }
 
-    private var pendingSubtitleLangRestore: String? = savedSettings.subtitleTrackLang.takeIf { savedSettings.subtitlesEnabled }
+    private var pendingSubtitleLangRestore: String? = savedSettings.subtitleTrackLang.takeIf { savedSettings.subtitlesEnabled && savedSettings.subtitleSource !in setOf("external", "off") }
 
     private fun restoreSubtitleTrackIfPending() {
+        if (usesExternalSubtitles) return
         val wanted = pendingSubtitleLangRestore ?: return
         val tracks = subtitleTrackList
         if (tracks.isEmpty()) return
@@ -538,6 +545,10 @@ class DisplayScreen(
 
     /** Data addons keep on this display, as the server last sent it. */
     var customData: Map<String, ByteArray> = emptyMap()
+        set(value) {
+            field = value
+            setSubtitleSource(VttSubtitleSource.read(value))
+        }
 
     /** Anchor block position of the display (cached). */
     val pos: BlockPos; get() = blockPos ?: BlockPos(x, y, z).also { blockPos = it }
@@ -577,15 +588,55 @@ class DisplayScreen(
 
     /** Subtitle tracks available for the current video (empty unless the provider exposed captions). */
     val subtitleTrackList: List<SubtitleTrack>
-        get() = mediaPlayer?.getAvailableSubtitleTracks() ?: []
+        get() = (if (subtitleUrl.isNotEmpty()) listOf(SubtitleTrack(subtitleUrl, EXTERNAL_SUBTITLE_TRACK,
+            net.minecraft.network.chat.Component.translatable("dreamdisplays.subtitle.external_vtt").string)) else emptyList()) +
+            (mediaPlayer?.getAvailableSubtitleTracks() ?: emptyList())
 
     /** Language of the currently selected subtitle track, or null when subtitles are off. */
     val currentSubtitleLang: String?
-        get() = mediaPlayer?.getCurrentSubtitleLang()
+        get() = if (usesExternalSubtitles) EXTERNAL_SUBTITLE_TRACK else mediaPlayer?.getCurrentSubtitleLang()
 
-    /** True while this viewer has subtitles turned on for this display. */
-    val subtitlesEnabled: Boolean
-        get() = mediaPlayer?.isSubtitlesEnabled() == true
+    /** External subtitle source supplied by the server. */
+    var subtitleUrl: String = ""; private set
+    private val externalSubtitles = WebVttController(uuid)
+
+    private val usesExternalSubtitles: Boolean
+        get() = subtitleUrl.isNotEmpty() && savedSettings.subtitleSource in setOf("auto", "external")
+
+    /** Viewer-local visibility; provider track choice remains owned by upstream playback. */
+    var subtitlesEnabled: Boolean
+        get() = if (usesExternalSubtitles) savedSettings.externalSubtitlesEnabled else savedSettings.subtitleSource != "off" && mediaPlayer?.isSubtitlesEnabled() == true
+        set(value) {
+            if (usesExternalSubtitles || (value && subtitleUrl.isNotEmpty() && savedSettings.subtitleSource == "off")) {
+                savedSettings.externalSubtitlesEnabled = value
+                savedSettings.subtitleSource = if (value) "external" else "off"
+            }
+            else {
+                val language = if (value) savedSettings.subtitleTrackLang ?: subtitleTrackList.firstOrNull()?.lang else null
+                subtitleTrack = language
+                ClientSettingsStore.setSubtitleTrackLang(uuid, language)
+            }
+            ClientSettingsStore.save()
+        }
+
+    var subtitleScale: Float
+        get() = savedSettings.subtitleScale
+        set(value) { savedSettings.subtitleScale = value.coerceIn(0.5f, 2f); ClientSettingsStore.save() }
+
+    var subtitleVerticalPosition: Float
+        get() = savedSettings.subtitleVerticalPosition
+        set(value) { savedSettings.subtitleVerticalPosition = value.coerceIn(0f, 1f); ClientSettingsStore.save() }
+
+    internal fun setSubtitleSource(url: String) {
+        val normalized = url.trim()
+        if (normalized == subtitleUrl) return
+        subtitleUrl = normalized
+        externalSubtitles.setSource(normalized)
+    }
+
+    val activeSubtitleLines: List<String>
+        get() = if (usesExternalSubtitles) externalSubtitles.activeLines(mediaPlayer?.getSubtitleTimeNanos() ?: 0L)
+        else currentSubtitleText?.lines() ?: emptyList()
 
     /** Subtitle line active at the current playback position, or null when off / between cues. */
     val currentSubtitleText: String?
@@ -633,7 +684,7 @@ class DisplayScreen(
         waitingForInitialTimeline = requiresServerTimeline()
         waitingSinceNanos = if (waitingForInitialTimeline) System.nanoTime() else 0L
         pendingAudioTrackLangRestore = savedSettings.audioTrackLang
-        pendingSubtitleLangRestore = savedSettings.subtitleTrackLang.takeIf { savedSettings.subtitlesEnabled }
+        pendingSubtitleLangRestore = savedSettings.subtitleTrackLang.takeIf { savedSettings.subtitlesEnabled && savedSettings.subtitleSource !in setOf("external", "off") }
     }
 
     /** True while the screen is holding back the picture until the server's first timeline arrives. */
@@ -1046,6 +1097,7 @@ class DisplayScreen(
         textureResource.releaseAsync()
         previewFrameCache?.closeAsync()
         previewFrameCache = null
+        externalSubtitles.close()
         subtitleOverlayCache?.dispose()
         subtitleOverlayCache = null
 

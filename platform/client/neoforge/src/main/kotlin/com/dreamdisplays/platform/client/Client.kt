@@ -4,6 +4,9 @@ import com.dreamdisplays.platform.client.core.DreamServices
 import com.dreamdisplays.platform.client.displays.DisplayRegistry
 import com.dreamdisplays.platform.client.platform.NeoForgePlatformIntegrationProvider
 import com.dreamdisplays.core.services.keys.PlatformServices
+//? if >=26.3 {
+import com.dreamdisplays.platform.client.render.subtitleTextSubmitter
+//?}
 import com.dreamdisplays.platform.client.render.ScreenRenderer
 import com.dreamdisplays.platform.client.render.UnshadedDisplayPass
 import com.dreamdisplays.platform.client.Mod as DreamMod
@@ -92,7 +95,7 @@ class Client(modEventBus: IEventBus, container: ModContainer) : DreamMod {
         val stack = event.poseStack
         val collector = event.submitNodeCollector
         UnshadedDisplayPass.capture(stack, camera)
-        ScreenRenderer.render(stack, camera) { type, appendVertices ->
+        ScreenRenderer.render(stack, camera, submitText = subtitleTextSubmitter(collector)) { type, appendVertices ->
             collector.submitCustomGeometry(
                 stack, type, SubmitNodeCollector.CustomGeometryRenderer { pose, consumer -> appendVertices(pose, consumer) },
             )

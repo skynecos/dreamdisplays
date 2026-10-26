@@ -1,5 +1,7 @@
 package com.dreamdisplays.platform.client.render
 
+import com.dreamdisplays.api.display.model.settings.ClientDisplaySettings
+import com.dreamdisplays.platform.client.subtitles.subtitleBackgroundArgb
 import com.dreamdisplays.platform.client.Initializer
 import com.mojang.blaze3d.platform.NativeImage
 //? if >=1.21.11 {
@@ -28,6 +30,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * Regenerated only when the text changes. Rendered with plain AWT text layout.
  */
 class SubtitleOverlayTexture {
+    private data class Appearance(val font: String, val text: Int, val outline: Int, val background: Int)
+    private var lastAppearance: Appearance? = null
     private var lastText: String? = null
     private var identifier: Identifier? = null
     private var texture: DynamicTexture? = null
@@ -37,17 +41,21 @@ class SubtitleOverlayTexture {
         private set
 
     /** Updates the texture if [text] differs from what's currently baked. Render thread only. */
-    fun update(text: String?) {
+    fun update(text: String?, personal: ClientDisplaySettings? = null) {
+        val appearance = Appearance(personal?.subtitleFont ?: "default", personal?.subtitleTextColor ?: -1,
+            personal?.subtitleOutlineColor ?: 0,
+            personal?.let { subtitleBackgroundArgb(it.subtitleBackgroundColor, it.subtitleBackgroundOpacity) } ?: 0)
         val normalized = text?.takeIf { it.isNotBlank() }
-        if (normalized == lastText) return
+        if (normalized == lastText && appearance == lastAppearance) return
         lastText = normalized
+        lastAppearance = appearance
 
         texture?.close()
         texture = null
         cachedRenderType = null
         if (normalized == null) return
 
-        val image = rasterize(normalized)
+        val image = rasterize(normalized, appearance)
         aspectRatio = image.width.toFloat() / image.height.toFloat()
         val native = toNativeImage(image)
         val id = identifier ?: Identifier.fromNamespaceAndPath(
@@ -84,8 +92,8 @@ class SubtitleOverlayTexture {
         lastText = null
     }
 
-    private fun rasterize(text: String): BufferedImage {
-        val font = Font(Font.SANS_SERIF, Font.BOLD, FONT_SIZE_PX)
+    private fun rasterize(text: String, appearance: Appearance): BufferedImage {
+        val font = Font(if (appearance.font == "uniform") Font.MONOSPACED else Font.SANS_SERIF, Font.BOLD, FONT_SIZE_PX)
         val probe = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
         val metrics = probe.createGraphics().let { g ->
             g.font = font
@@ -102,14 +110,21 @@ class SubtitleOverlayTexture {
         val g = image.createGraphics()
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        g.color = BACKGROUND_COLOR
+        g.color = Color(appearance.background, true)
         g.fillRect(0, 0, width, height)
         g.font = font
-        g.color = Color.WHITE
         var y = PADDING_Y + metrics.ascent
         for (line in lines) {
             val lineWidth = metrics.stringWidth(line)
-            g.drawString(line, (width - lineWidth) / 2, y)
+            val x = (width - lineWidth) / 2
+            if ((appearance.outline ushr 24) != 0) {
+                g.color = Color(appearance.outline, true)
+                for ((dx, dy) in arrayOf(-1 to -1, 0 to -1, 1 to -1, -1 to 0, 1 to 0, -1 to 1, 0 to 1, 1 to 1)) {
+                    g.drawString(line, x + dx * 2, y + dy * 2)
+                }
+            }
+            g.color = Color(appearance.text or 0xFF000000.toInt(), true)
+            g.drawString(line, x, y)
             y += lineHeight
         }
         g.dispose()
@@ -161,6 +176,5 @@ class SubtitleOverlayTexture {
         private const val PADDING_Y = 10
         private const val MAX_TEXT_WIDTH_PX = 900
         private const val MAX_LINES = 3
-        private val BACKGROUND_COLOR = Color(0, 0, 0)
     }
 }

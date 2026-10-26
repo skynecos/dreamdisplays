@@ -1,5 +1,6 @@
 package com.dreamdisplays.platform.server.utils.net
 
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.api.playback.model.DisplayAccess
 import com.dreamdisplays.api.playback.model.PlaybackAction
 import com.dreamdisplays.api.playback.model.PlaybackMode
@@ -87,6 +88,7 @@ object DisplayActions {
         if (!DisplayManager.isPlayerInRange(player, displayData)) return
         if (!setVideoThrottle.tryAcquire(displayId, SET_VIDEO_COOLDOWN_MS)) return
 
+        if (displayData.url != url) VttSubtitleSource.write(displayData.customData, "")
         displayData.url = url
         displayData.lang = MediaUrlPolicy.sanitizeLang(lang)
 

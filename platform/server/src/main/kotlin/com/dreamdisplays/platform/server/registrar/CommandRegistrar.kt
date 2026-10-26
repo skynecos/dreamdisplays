@@ -39,6 +39,7 @@ object CommandRegistrar {
             createBranch()
             deleteBranch()
             videoBranch()
+            subtitleBranch()
             nameBranch()
             infoBranch()
             listBranch()
@@ -114,6 +115,31 @@ object CommandRegistrar {
                         val parts = StringArgumentType.getString(ctx, "url_and_lang").trim().split(" ")
                         val lang = if (parts.size > 1) parts.last() else ""
                         VideoCommand().execute(ctx.source.sender, arrayOf(target(ctx), parts[0], lang))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun LiteralArgumentBuilder<CommandSourceStack>.subtitleBranch() {
+        literal("subtitle") {
+            requires { it.sender is Player && it.sender.hasPermission(PaperServer.config.permissions.video) }
+            target {
+                literal("off") {
+                    executesCommand { ctx -> SubtitleCommand().clear(ctx.source.sender, target(ctx)) }
+                }
+                literal("url") {
+                    argument("vtt_url", StringArgumentType.greedyString()) {
+                        executesCommand { ctx ->
+                            SubtitleCommand().setUrl(ctx.source.sender, target(ctx), StringArgumentType.getString(ctx, "vtt_url"))
+                        }
+                    }
+                }
+                literal("file") {
+                    argument("vtt_file", StringArgumentType.string()) {
+                        executesCommand { ctx ->
+                            SubtitleCommand().setFile(ctx.source.sender, target(ctx), StringArgumentType.getString(ctx, "vtt_file"))
+                        }
                     }
                 }
             }

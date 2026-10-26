@@ -21,6 +21,7 @@ data class DisplayData(
     var depth: Int = 1,
     var conforming: Boolean = false,
     var videoUrl: String = "",
+    var subtitleUrl: String = "",
     var lang: String = "",
     var volume: Float = 0.5f,
     var quality: String = "1080",

@@ -261,7 +261,7 @@ class DisplayMenu private constructor(
         audioTrackButton.visibleWhen = notErrored
 
         subtitleButton = addUi(IconButton("cc") { subtitleDropdown.toggle() })
-        subtitleButton.enabledWhen = { videoReady() && ds.subtitleTrackList.isNotEmpty() }
+        subtitleButton.enabledWhen = { videoReady() && (ds.subtitleUrl.isNotEmpty() || ds.subtitleTrackList.isNotEmpty()) }
         subtitleButton.visibleWhen = notErrored
 
         val pauseButton = addUi(
@@ -324,6 +324,11 @@ class DisplayMenu private constructor(
                 })
         } else null
 
+        val subtitleSettingsButton = addUi(IconButton("cc") {
+            MinecraftScreenUtil.setScreen(Minecraft.getInstance(), SubtitlePreferencesMenu(ds, this))
+        })
+        subtitleSettingsButton.visibleWhen = notErrored
+
         suggestions = addUi(SuggestionsPanel(::onPickSuggested, ds.suggestionsController))
         suggestions.visibleWhen = { !ds.errored && suggestionsRect != null }
         // Locked / Broadcast / Watch party displays only let the owner / admin change the video, so
@@ -337,8 +342,9 @@ class DisplayMenu private constructor(
             )
         settings = SettingsSection(
             rows = settingsRows(qualityReset, brightnessReset, audio3dReset, syncReset, accessReset),
-            ownerActions = [reportButton, deleteButton],
+            ownerActions = [reportButton, deleteButton, subtitleSettingsButton],
             buttonTooltips = [
+                subtitleSettingsButton to { listOf(Component.translatable("dreamdisplays.ui.subtitle_preferences"), Component.translatable("dreamdisplays.ui.subtitle_local_only")) },
                 deleteButton to { buttonTooltip(ClientMessage.BUTTON_DELETE.key) },
                 reportButton to { buttonTooltip(ClientMessage.BUTTON_REPORT.key) },
             ],

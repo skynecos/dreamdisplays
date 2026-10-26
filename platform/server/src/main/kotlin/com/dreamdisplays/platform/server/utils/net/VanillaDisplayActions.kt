@@ -9,6 +9,7 @@ import com.dreamdisplays.api.playback.model.PlaybackMode
 import com.dreamdisplays.shared.playback.PlaybackPermissions
 import com.dreamdisplays.api.playback.model.WatchPartyAction
 import com.dreamdisplays.shared.policy.MediaUrlPolicy
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.platform.server.VanillaServerState
 import com.dreamdisplays.platform.server.api.ServerApiHost
 import com.dreamdisplays.platform.server.datatypes.display.VanillaDisplayData
@@ -152,6 +153,7 @@ object VanillaDisplayActions {
         if (!DisplayManager.isPlayerInRange(player, displayData)) return
         if (!setVideoThrottle.tryAcquire(displayId, SET_VIDEO_COOLDOWN_MS)) return
 
+        if (displayData.url != url) VttSubtitleSource.write(displayData.customData, "")
         displayData.url = url
         displayData.lang = MediaUrlPolicy.sanitizeLang(lang)
         ServerCoroutines.io.launch { VanillaServerState.storage?.saveDisplay(displayData) }

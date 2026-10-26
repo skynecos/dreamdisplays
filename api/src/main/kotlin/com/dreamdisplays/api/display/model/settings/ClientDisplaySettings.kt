@@ -41,6 +41,33 @@ data class ClientDisplaySettings(
     /** Viewer-picked subtitle track language, re-applied after rejoining or when the video changes. */
     var subtitleTrackLang: String? = null,
 
+    /** Viewer-picked subtitle source: auto, external, provider or off. */
+    var subtitleSource: String = "auto",
+
+    /** External VTT visibility, independent of provider track selection. */
+    var externalSubtitlesEnabled: Boolean = true,
+
+    /** Viewer-local subtitle text scale. Clamped to [0.5, 2.0] by the client. */
+    var subtitleScale: Float = 1.0f,
+
+    /** Viewer-local vertical subtitle position, from 0.0 (bottom) to 1.0 (higher). */
+    var subtitleVerticalPosition: Float = 0.15f,
+
+    /** Viewer-local subtitle font preset token. */
+    var subtitleFont: String = "default",
+
+    /** Viewer-local opaque ARGB subtitle text color. */
+    var subtitleTextColor: Int = -1,
+
+    /** Viewer-local ARGB subtitle outline color. Alpha zero disables the outline. */
+    var subtitleOutlineColor: Int = 0x00000000,
+
+    /** Viewer-local RGB/ARGB source color used by the subtitle background plate. */
+    var subtitleBackgroundColor: Int = 0xFF000000.toInt(),
+
+    /** Viewer-local subtitle background opacity in the range 0.0..1.0. */
+    var subtitleBackgroundOpacity: Float = 0.0f,
+
     /** Last known playback position in nanoseconds, resumed on Local displays after a restart. */
     var savedTimeNanos: Long = 0,
 
@@ -56,6 +83,16 @@ data class ClientDisplaySettings(
     /** Whether the 3D acoustics engine applies to this display; false forces the legacy distance-gain-only path. */
     var acousticsEnabled: Boolean = true,
 ) {
+
+    /** Applies bounds to persisted subtitle values without touching playback preferences. */
+    fun normalizeSubtitlePreferences() {
+        subtitleSource = subtitleSource.takeIf { it in setOf("auto", "external", "provider", "off") } ?: "auto"
+        subtitleScale = if (subtitleScale.isFinite()) subtitleScale.coerceIn(0.5f, 2f) else 1f
+        subtitleVerticalPosition = if (subtitleVerticalPosition.isFinite()) subtitleVerticalPosition.coerceIn(0f, 1f) else 0.15f
+        subtitleBackgroundOpacity = if (subtitleBackgroundOpacity.isFinite()) subtitleBackgroundOpacity.coerceIn(0f, 1f) else 0f
+        subtitleFont = subtitleFont.lowercase().takeIf { it == "default" || it == "uniform" } ?: "default"
+        subtitleTextColor = subtitleTextColor or 0xFF000000.toInt()
+    }
 
     companion object {
         /** Default volume for all displays. The UI presents this as 50% (slider range is [0, 1] -> [0%, 200%]). */

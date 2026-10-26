@@ -302,6 +302,12 @@ class MediaPlayer(
     fun getResumePositionNanos(): Long =
         sessionManager.parkedPositionNanos() ?: sessionManager.activeBridgeEdgeNanos() ?: getCurrentTime()
 
+    /** A/V presentation clock for external WebVTT, including replay playback. */
+    fun getSubtitleTimeNanos(): Long {
+        val paced = sessionManager.currentPacingNanos()
+        return if (paced >= 0L) paced else getCurrentTime()
+    }
+
     /** Stream duration in nanos, or 0 for live streams. */
     fun getDuration(): Long = if (liveStream) 0L else durationHintNanos
 

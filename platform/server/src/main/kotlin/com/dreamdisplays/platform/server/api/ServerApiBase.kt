@@ -1,5 +1,6 @@
 package com.dreamdisplays.platform.server.api
 
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.api.CommandResult
 import com.dreamdisplays.api.addon.AddonSide
 import com.dreamdisplays.api.display.data.DisplayCustomDataLimits
@@ -120,6 +121,7 @@ abstract class ServerDisplayBase internal constructor(
         if (CustomMediaGate.refusalKey(url, customMediaSettings(), hasPermission = true) != null) {
             return CommandResult.REFUSED
         }
+        if (data.url != url) VttSubtitleSource.write(data.customData, "")
         data.url = url
         data.lang = MediaUrlPolicy.sanitizeLang(lang)
         save()

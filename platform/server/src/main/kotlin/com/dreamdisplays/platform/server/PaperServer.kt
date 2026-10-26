@@ -4,6 +4,7 @@ import com.dreamdisplays.platform.server.api.PaperServerApi
 import com.dreamdisplays.platform.server.datatypes.display.PaperDisplayData
 import com.dreamdisplays.platform.server.managers.DisplayManager
 import com.dreamdisplays.platform.server.managers.StorageManager
+import com.dreamdisplays.platform.server.media.LocalVttServer
 import com.dreamdisplays.platform.server.meta.Scheduler
 import com.dreamdisplays.platform.server.meta.ServerCoroutines
 import com.dreamdisplays.platform.server.metrics.TelemetryMetrics
@@ -52,6 +53,7 @@ class PaperServer : JavaPlugin() {
         TelemetryMetrics.warmUp()
 
         Scheduler.init(this)
+        LocalVttServer.start(this)
 
         val s = Companion.config.storage
         val backend = StorageBackend.fromConfig(s.type)
@@ -96,6 +98,7 @@ class PaperServer : JavaPlugin() {
      */
     fun doDisable() {
         if (!::storage.isInitialized) return
+        disableStep("stop local VTT origin") { LocalVttServer.stop() }
         disableStep("stop addons") { PaperServerApi.stop() }
         disableStep("save displays") { DisplayManager.save { data: PaperDisplayData -> storage.saveDisplay(data) } }
         disableStep("stop background IO") { ServerCoroutines.shutdown() }

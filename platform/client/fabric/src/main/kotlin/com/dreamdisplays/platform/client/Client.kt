@@ -30,6 +30,10 @@ import com.dreamdisplays.platform.client.displays.DisplayRegistry
 import com.dreamdisplays.platform.client.net.LegacyProbe
 import com.dreamdisplays.platform.client.net.V2Payload
 import com.dreamdisplays.platform.client.platform.FabricPlatformIntegrationProvider
+//? if >=26.2 {
+import com.dreamdisplays.platform.client.render.subtitleTextSubmitter
+import net.minecraft.client.renderer.SubmitNodeCollector
+//?}
 import com.dreamdisplays.platform.client.render.ScreenRenderer
 import com.dreamdisplays.platform.client.render.UnshadedDisplayPass
 import com.mojang.blaze3d.vertex.PoseStack
@@ -196,7 +200,11 @@ class Client : ClientModInitializer, Mod {
         }
 
         runCatching {
-            ScreenRenderer.render(context.poseStack(), camera) { type, appendVertices ->
+            ScreenRenderer.render(context.poseStack(), camera,
+                //? if >=26.2 {
+                submitText = subtitleTextSubmitter(submitNodeCollector as SubmitNodeCollector),
+                //?}
+            ) { type, appendVertices ->
                 submitCustomGeometry(context.poseStack(), submitNodeCollector, type, appendVertices)
             }
         }.onFailure { e ->

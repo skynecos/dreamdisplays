@@ -38,6 +38,7 @@ class HelpCommand : SubCommand {
 
         line("displayHelpCreate")
         line("displayHelpVideo")
+        MessageUtil.sendColoredMessage(sender, "&f /display subtitle this|<id> url <url> | file <dosya.vtt> | off")
         line("displayHelpName")
         line("displayHelpInfo")
         line("displayHelpDelete")

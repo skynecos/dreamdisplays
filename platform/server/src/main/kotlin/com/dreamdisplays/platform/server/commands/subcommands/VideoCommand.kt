@@ -1,5 +1,6 @@
 package com.dreamdisplays.platform.server.commands.subcommands
 
+import com.dreamdisplays.shared.subtitle.VttSubtitleSource
 import com.dreamdisplays.platform.server.ModLoaderOnly
 import com.dreamdisplays.api.media.source.MediaSource
 import com.dreamdisplays.shared.playback.PlaybackPermissions
@@ -79,6 +80,7 @@ class VideoCommand : SubCommand {
         }
 
         data.apply {
+            if (url != requestedUrl) VttSubtitleSource.write(customData, "")
             url = requestedUrl
             lang = LanguageTag.canonicalAudioCode(args.getOrNull(2)).value
         }
@@ -174,6 +176,7 @@ object VanillaVideoCommand {
             return 0
         }
 
+        if (data.url != requestedUrl) VttSubtitleSource.write(data.customData, "")
         data.url = requestedUrl
         data.lang = LanguageTag.canonicalAudioCode(langRaw).value
         ServerCoroutines.io.launch { VanillaServerState.storage?.saveDisplay(data) }

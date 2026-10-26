@@ -1,5 +1,6 @@
 package com.dreamdisplays.platform.client.storage
 
+import com.dreamdisplays.platform.client.displays.EXTERNAL_SUBTITLE_TRACK
 import com.dreamdisplays.api.media.model.VideoQuality
 import com.dreamdisplays.api.display.model.settings.ClientDisplaySettings
 import com.dreamdisplays.api.display.model.settings.ClientSettingsStorage
@@ -30,7 +31,7 @@ object ClientSettingsStore : ClientSettingsStorage {
             jsonFiles.readVersioned(jsonFiles.file(FILE_NAME), settingsSerializer, SCHEMA_VERSION, logger) ?: return
         settings.clear()
         loaded.forEach { (key, value) ->
-            runCatching { settings[UUID.fromString(key)] = value }
+            runCatching { value.normalizeSubtitlePreferences(); settings[UUID.fromString(key)] = value }
                 .onFailure { logger.error("Invalid UUID in client display settings: $key.") }
         }
     }
@@ -84,8 +85,14 @@ object ClientSettingsStore : ClientSettingsStorage {
 
     override fun setSubtitleTrackLang(displayUuid: UUID, lang: String?) {
         val s = getSettings(displayUuid)
-        s.subtitleTrackLang = lang
-        s.subtitlesEnabled = lang != null
+        if (lang == EXTERNAL_SUBTITLE_TRACK) {
+            s.subtitleSource = "external"
+            s.externalSubtitlesEnabled = true
+        } else {
+            s.subtitleSource = if (lang == null) "off" else "provider"
+            s.subtitleTrackLang = lang
+            s.subtitlesEnabled = lang != null
+        }
         save()
     }
 
