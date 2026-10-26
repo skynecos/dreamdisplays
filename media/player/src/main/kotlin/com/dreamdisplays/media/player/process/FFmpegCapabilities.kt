@@ -20,7 +20,7 @@ internal object FFmpegCapabilities {
     private fun probedFilters(ffmpeg: String): Set<String> =
         filterCache.computeIfAbsent(ffmpeg) { bin ->
             runCatching {
-                val proc = ProcessBuilder(bin, "-hide_banner", "-filters")
+                val proc = FFmpegBinary.processBuilder(listOf(bin, "-hide_banner", "-filters"))
                     .redirectErrorStream(true)
                     .start()
                 runCatching { proc.outputStream.close() }

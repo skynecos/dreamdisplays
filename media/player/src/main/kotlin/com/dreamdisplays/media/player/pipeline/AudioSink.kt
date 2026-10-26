@@ -20,6 +20,7 @@ import javax.sound.sampled.*
  */
 internal class AudioSink(private val debugLabel: String) {
     private val logger = LoggerFactory.getLogger(javaClass)
+    private val androidAudio = System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true
 
     companion object {
         /** The PCM sample rate used by every session: 44.1 kHz, stereo, signed 16-bit little-endian. */
@@ -327,7 +328,7 @@ internal class AudioSink(private val debugLabel: String) {
             proc.inputStream.use { input ->
                 val fmt = pcmFormat()
                 val info = DataLine.Info(SourceDataLine::class.java, fmt)
-                if (!AudioSystem.isLineSupported(info)) {
+                if (!androidAudio && !AudioSystem.isLineSupported(info)) {
                     logger.warn("$debugLabel PCM line not supported (switch).")
                     return@use
                 }
@@ -475,7 +476,7 @@ internal class AudioSink(private val debugLabel: String) {
             proc.inputStream.use { input ->
                 val fmt = pcmFormat()
                 val info = DataLine.Info(SourceDataLine::class.java, fmt)
-                if (!AudioSystem.isLineSupported(info)) {
+                if (!androidAudio && !AudioSystem.isLineSupported(info)) {
                     logger.warn("$debugLabel PCM line not supported.")
                     return@runCatching
                 }
@@ -539,7 +540,7 @@ internal class AudioSink(private val debugLabel: String) {
         runCatching {
             val fmt = pcmFormat()
             val info = DataLine.Info(SourceDataLine::class.java, fmt)
-            if (!AudioSystem.isLineSupported(info)) {
+            if (!androidAudio && !AudioSystem.isLineSupported(info)) {
                 logger.warn("$debugLabel PCM line not supported (bridge).")
                 return@runCatching
             }
@@ -772,6 +773,17 @@ internal class AudioSink(private val debugLabel: String) {
     }
 
     private fun openLine(info: DataLine.Info, fmt: AudioFormat): SourceDataLine? {
+        if (androidAudio) {
+            return runCatching {
+                AndroidOpenALLine().also {
+                    it.open(fmt, LINE_BUFFER_BYTES)
+                    logger.info("$debugLabel Android OpenAL line opened with reclaimed-frame clock.")
+                }
+            }.getOrElse { e ->
+                logger.warn("$debugLabel Android OpenAL line failed: ${e.message}.")
+                null
+            }
+        }
         repeat(OPEN_RETRIES) { attempt ->
             try {
                 return (AudioSystem.getLine(info) as SourceDataLine).also { it.open(fmt, LINE_BUFFER_BYTES) }

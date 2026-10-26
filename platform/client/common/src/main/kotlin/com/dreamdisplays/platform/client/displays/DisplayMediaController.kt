@@ -40,6 +40,11 @@ internal class DisplayMediaController(private val screen: DisplayScreen) {
     fun load(videoUrl: String, lang: String, preservePausedState: Boolean) {
         if (videoUrl == "") return
 
+        val current = player
+        if (current != null && screen.videoUrl == videoUrl && screen.lang == lang && !screen.errored) {
+            return
+        }
+
         DreamServices.registry.getOrNull(MediaServices.RESOLVER_REGISTRY)?.prefetch(MediaSource.from(videoUrl))
 
         val expected = generation.incrementAndGet()

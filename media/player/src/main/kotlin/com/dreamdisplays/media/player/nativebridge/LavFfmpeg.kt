@@ -24,6 +24,9 @@ object LavFfmpeg {
 
     /** Ensures [dir] contains `FFmpeg` libraries, downloading and unpacking them on first run. */
     fun ensure(dir: File): Boolean {
+        if (System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true) {
+            return provisionAndroidHelperLibraries(dir)
+        }
         if (hasFfmpeg(dir)) return true
         val source = source() ?: return false
         return runCatching {
@@ -44,6 +47,36 @@ object LavFfmpeg {
             hasFfmpeg(dir)
         }.getOrElse { e ->
             logger.warn("Could not provision FFmpeg libraries (${e.javaClass.simpleName}: ${e.message}).")
+            false
+        }
+    }
+
+    private fun provisionAndroidHelperLibraries(dir: File): Boolean {
+        val helperPath = System.getenv("POJAV_FFMPEG_PATH")?.takeIf { it.isNotBlank() } ?: return false
+        val helper = File(helperPath)
+        val sourceDir = helper.parentFile
+        if (!helper.isFile || sourceDir == null || !sourceDir.isDirectory) {
+            logger.warn("Android FFmpeg helper directory is unavailable: $helperPath.")
+            return false
+        }
+        return runCatching {
+            if (!dir.exists() && !dir.mkdirs()) throw IOException("Cannot create $dir.")
+            val libraries = sourceDir.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".so", ignoreCase = true) }
+                ?.sortedBy { it.name }
+                .orEmpty()
+            if (libraries.isEmpty()) throw IOException("No helper shared libraries are visible in $sourceDir.")
+            var copied = 0
+            for (source in libraries) {
+                if (source.name == "libffmpeg.so" || source.name == "libffprobe.so") continue
+                val target = File(dir, source.name)
+                if (!target.isFile || target.length() != source.length()) source.copyTo(target, overwrite = true)
+                copied++
+            }
+            logger.info("Android in-process FFmpeg dependencies ready ($copied helper libraries copied).")
+            hasFfmpeg(dir)
+        }.getOrElse { e ->
+            logger.warn("Could not provision Android helper libraries (${e.javaClass.simpleName}: ${e.message}).")
             false
         }
     }

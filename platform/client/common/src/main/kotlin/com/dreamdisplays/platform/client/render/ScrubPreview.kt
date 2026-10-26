@@ -114,7 +114,11 @@ object ScrubPreview {
         }
         val firstParty = MediaHosts.isFirstParty(sourceUrl)
         val samples = if (firstParty) SAMPLE_COUNT else THIRD_PARTY_SAMPLE_COUNT
-        val concurrency = if (firstParty) EXTRACT_CONCURRENCY else THIRD_PARTY_CONCURRENCY
+        // A thumbnail sweep runs separate FFmpeg decoders. On Android those are software
+        // decoders and can contend with a live cinema stream, so serialise previews there.
+        // Their frame count and image resolution remain unchanged.
+        val androidRuntime = System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true
+        val concurrency = if (androidRuntime) 1 else if (firstParty) EXTRACT_CONCURRENCY else THIRD_PARTY_CONCURRENCY
         val spacing = (durationNanos / samples).coerceAtLeast(MIN_SAMPLE_SPACING_NANOS)
         val timestamps = generateSequence(spacing / 2) { it + spacing }.takeWhile { it < durationNanos }.toList()
         logger.info("Generating $key: ${timestamps.size} sample(s), concurrency=$concurrency, ffmpeg=$ffmpeg")

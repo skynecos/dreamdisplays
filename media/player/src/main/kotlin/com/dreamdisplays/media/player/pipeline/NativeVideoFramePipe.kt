@@ -49,6 +49,7 @@ internal class NativeVideoFramePipe(
     }
 
     override val lastFrameReceivedNanos = AtomicLong(0)
+    override val lastFramePresentedNanos = AtomicLong(0)
 
     @Volatile
     private var rawPopoutFrameSink: ((ByteBuffer, Int, Int, FramePixelFormat) -> Unit)? = null
@@ -359,7 +360,10 @@ internal class NativeVideoFramePipe(
         val lav = handle == 0L && lavHandle != 0L
         val prerollMarginNs = maxOf(frameNs * 2L, LAV_PREROLL_MARGIN_NS)
         val metrics = NativeReadMetrics(debugLabel, if (lav) "lav" else "process", w, h, frameSize)
-        prebuffer?.onPresent = { buf -> feedPopout(buf, w, h, frameSize, metrics) }
+        prebuffer?.onPresent = { buf ->
+            lastFramePresentedNanos.set(System.nanoTime())
+            feedPopout(buf, w, h, frameSize, metrics)
+        }
 
         fun armFirstFrameClock() {
             if (!firstFrame) {
@@ -582,6 +586,7 @@ internal class NativeVideoFramePipe(
             if (MediaPlayer.DEBUG) metrics.recordPaced(avDiffNs)
 
             spare = surface.publish(spare, frameSize)
+            lastFramePresentedNanos.set(System.nanoTime())
             if (MediaPlayer.DEBUG) MediaPlayer.samplesIn.incrementAndGet()
             if (MediaPlayer.DEBUG) metrics.recordPublished()
 
@@ -682,6 +687,7 @@ internal class NativeVideoFramePipe(
     }
 
     private fun lavHwCode(hwAccel: HwAccelBackend): Int {
+        if (System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true) return HwAccelBackend.NONE.lavCode
         if (hwAccel == HwAccelBackend.NONE) return HwAccelBackend.NONE.lavCode
         val configured = System.getProperty("dreamdisplays.native.libav.hw")?.lowercase()
         val mode = configured ?: if (OsInfo.isMac) "none" else "auto"

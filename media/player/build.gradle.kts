@@ -9,5 +9,7 @@ dependencies {
     api(libs.commonsCompress)
     api(libs.tukaaniXz)
     compileOnly(libs.slf4jApi)
+    compileOnly("org.lwjgl:lwjgl:3.4.1")
+    compileOnly("org.lwjgl:lwjgl-openal:3.4.1")
     testImplementation(libs.slf4jApi)
 }

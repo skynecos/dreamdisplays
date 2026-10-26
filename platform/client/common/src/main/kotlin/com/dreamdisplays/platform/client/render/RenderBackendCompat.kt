@@ -12,7 +12,10 @@ internal object RenderBackendCompat {
     }
 
     /** True when raw OpenGL calls are safe (real GL backend and no Vulkan replacement). */
-    fun canUseDirectOpenGl(): Boolean = isOpenGlBackend() && !isVulkanModLoaded
+    fun canUseDirectOpenGl(): Boolean {
+        if (System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true) return false
+        return isOpenGlBackend() && !isVulkanModLoaded
+    }
 
     /** Best-effort typed active render backend. */
     fun backend(): RenderBackend = runCatching {

@@ -28,7 +28,19 @@ object NativeMedia {
     private const val LAV_BASE_NAME = "dreamdisplays_lav"
     private const val LAV_SURFACE_ABI_VERSION = 1
     private const val LAV_SURFACE_DESC_BYTES = 80L
-    private const val CACHE_ROOT = "./dreamdisplays/native"
+    /**
+     * Android's linker only accepts a library from the app's private storage. Kirazium
+     * Launcher exposes such a directory through MOD_ANDROID_RUNTIME; desktop keeps the
+     * portable game-directory cache used by upstream Dream Displays.
+     */
+    private fun cacheRoot(): File {
+        val androidRuntime = System.getenv("MOD_ANDROID_RUNTIME")?.takeIf { it.isNotBlank() }
+        return if (androidRuntime != null) {
+            File(androidRuntime, "dreamdisplays/native")
+        } else {
+            File("./dreamdisplays/native")
+        }
+    }
     private const val STDERR_CAP = 128L * 1024L
 
     const val LAV_SURFACE_FORMAT_NV12_8 = 1
@@ -414,8 +426,13 @@ object NativeMedia {
         }
         return try {
             val linker = Linker.nativeLinker()
-            LavFfmpeg.ensure(lib.parentFile)
+            if (!LavFfmpeg.ensure(lib.parentFile)) {
+                throw UnsatisfiedLinkError("FFmpeg dependencies could not be provisioned")
+            }
             preloadLavDependencies(lib.parentFile)
+            if (System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true) {
+                System.load(lib.absolutePath)
+            }
             val lookup = SymbolLookup.libraryLookup(lib.toPath(), Arena.global())
 
             fun bind(name: String, desc: FunctionDescriptor): MethodHandle =
@@ -554,7 +571,7 @@ object NativeMedia {
         }
 
         val libName = System.mapLibraryName(baseName)
-        val cached = File("$CACHE_ROOT/${platformKey()}/$libName")
+        val cached = File(File(cacheRoot(), platformKey()), libName)
 
         val resource = "/dreamdisplays-natives/${platformKey()}/$libName"
         javaClass.getResourceAsStream(resource)?.use { input ->

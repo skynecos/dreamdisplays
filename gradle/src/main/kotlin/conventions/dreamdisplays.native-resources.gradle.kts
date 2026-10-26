@@ -9,7 +9,8 @@ import java.io.File
 
 tasks.withType<ProcessResources>().configureEach {
     val rootProjectDir = rootProject.projectDir
-    val nativeBundleDir = rootProject.file("native/build/ci-bundle/dreamdisplays-natives")
+    val nativeBundleDir = rootProject.file(providers.gradleProperty("dreamdisplays.nativeBundleDir")
+        .getOrElse("native/build/ci-bundle/dreamdisplays-natives"))
     val requireNatives = providers.gradleProperty("dreamdisplays.requireNatives")
         .orElse(providers.environmentVariable("DREAMDISPLAYS_REQUIRE_NATIVES"))
         .map { it.toStrictBoolean() }

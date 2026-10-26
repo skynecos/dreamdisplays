@@ -88,8 +88,10 @@ class MediaPlayer(
 
         private val INIT_THREAD_COUNTER = AtomicInteger()
 
+        private val ANDROID_POJAV = System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true
         private val INIT_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(
-            Runtime.getRuntime().availableProcessors().coerceIn(4, 8),
+            if (ANDROID_POJAV) Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+            else Runtime.getRuntime().availableProcessors().coerceIn(4, 8),
         ) { r -> daemon(r, "MediaPlayer-init-${INIT_THREAD_COUNTER.incrementAndGet()}") }
 
         private val SUBTITLE_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(2) { r ->
@@ -149,7 +151,10 @@ class MediaPlayer(
         debugLabel = debugLabel,
         isSessionActive = { sessionManager.isPlaying && !sessionManager.isParked() && !terminated.get() },
         getLastFrameNanos = { sessionManager.lastFrameNanos.get() },
-        onStall = { handleSessionStall("no frames") },
+        getLastProgressNanos = { sessionManager.lastFrameProgressNanos.get() },
+        stallThresholdMs = if (ANDROID_POJAV) 15_000L else 45_000L,
+        startupHardTimeoutMs = if (ANDROID_POJAV) 45_000L else 60_000L,
+        onStall = { handleSessionStall("no presented video frames") },
     )
 
     private val sessionManager = PlaybackSessionManager(
@@ -893,7 +898,17 @@ class MediaPlayer(
                 val pos = if (liveStream) 0L else clock.currentTime()
                 // Restart in place when possible: the picture holds its last frame while the new
                 // session connects, instead of blanking through a blocking teardown.
-                if (sessionManager.beginSeek(ss, pos, lastQuality, currentHwAccel())) {
+                if (ANDROID_POJAV && reason == "no presented video frames") {
+                    // A frozen rejoin can keep the decoder alive while playout is wedged on one frame.
+                    // Reusing that same in-process LAV handle for an in-place seek can preserve the bad
+                    // prebuffer/pacing state, so reopen the full A/V session once. If this also stalls,
+                    // the existing repeated-stall branch above invalidates URLs and re-resolves.
+                    logger.warn(
+                        "$debugLabel Android video presentation stalled; reopening A/V session at " +
+                                "${pos / 1_000_000} ms."
+                    )
+                    startStreams(ss, pos)
+                } else if (sessionManager.beginSeek(ss, pos, lastQuality, currentHwAccel())) {
                     // The watchdog stops itself when it reports a stall, and this path never goes
                     // through startStreams, so nothing else would ever watch this session again.
                     watchdog.start()

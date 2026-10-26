@@ -26,6 +26,8 @@ import org.slf4j.LoggerFactory
 import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -63,6 +65,11 @@ internal class PlaybackSessionManager(
     private companion object {
         /** Pacing cadence for replay-only video; PTS still drives pacing, this is only the fallback. */
         const val REPLAY_FPS = 30.0
+
+        /** Shared teardown workers: bounded to avoid one thread per seek/reload on mobile. */
+        val DISCARD_EXECUTOR: ExecutorService = Executors.newFixedThreadPool(2) { r ->
+            daemon(r, "MediaPlayer-discard")
+        }
 
         /** How many silent-source verdicts to remember; well past any one player's stream ladder. */
         const val SILENT_MEMO_LIMIT = 64
@@ -238,8 +245,13 @@ internal class PlaybackSessionManager(
     )
 
     /** Declares the audio tracks to keep pre-warmed; the one currently playing must not be among them. */
-    fun setWarmAudioTracks(tracks: List<WarmTrack>) =
+    fun setWarmAudioTracks(tracks: List<WarmTrack>) {
+        if (System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true) {
+            audioWarmPool.setTracks(emptyList())
+            return
+        }
         audioWarmPool.setTracks(tracks.filter { it.url !in SILENT_SOURCES })
+    }
 
     init {
         audio.setParkFlag(parkFlag)
@@ -296,8 +308,11 @@ internal class PlaybackSessionManager(
         audio.currentVolume = volume
     }
 
-    /** Timestamp of the live channel's last decoded video frame; read by [StreamWatchdog]. */
-    val lastFrameNanos: AtomicLong get() = active?.pipe?.lastFrameReceivedNanos ?: noFrames
+    /** Timestamp of the live channel's last real playback frame; read by [StreamWatchdog]. */
+    val lastFrameNanos: AtomicLong get() = active?.pipe?.lastFramePresentedNanos ?: noFrames
+
+    /** Decoder progress, including seek/pre-roll frames that are intentionally not presented. */
+    val lastFrameProgressNanos: AtomicLong get() = active?.pipe?.lastFrameReceivedNanos ?: noFrames
 
     @Volatile
     private var popoutSink: ((ByteBuffer, Int, Int, FramePixelFormat) -> Unit)? = null
@@ -673,7 +688,7 @@ internal class PlaybackSessionManager(
     }
 
     private fun discardHalvesAsync(video: VideoChannel?, audioHalf: AudioHalf?) {
-        daemon({
+        DISCARD_EXECUTOR.execute {
             audioHalf?.let {
                 MediaProcess.gracefulDestroy(it.process)
                 joinSafely(it.thread)
@@ -682,7 +697,7 @@ internal class PlaybackSessionManager(
                 ch.teardownProcess()
                 renderExecutor.execute { ch.pipe.cleanup() }
             }
-        }, "MediaPlayer-session-discard").start()
+        }
     }
 
     /** Starts cached replay video alone (no audio, no network) so reappearing display shows frames instantly. */
@@ -1067,10 +1082,10 @@ internal class PlaybackSessionManager(
     }
 
     private fun discardChannelAsync(channel: VideoChannel) {
-        daemon({
+        DISCARD_EXECUTOR.execute {
             channel.teardownProcess()
             renderExecutor.execute { channel.pipe.cleanup() }
-        }, "MediaPlayer-video-discard").start()
+        }
     }
 
     private fun discardChannelBlocking(channel: VideoChannel) {

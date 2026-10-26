@@ -31,6 +31,26 @@ object FFmpegBinary {
     }
 
     /**
+     * Builds a process for [command]. On Android/Mojo the FFmpeg executable lives in a
+     * different APK's native-library directory; Android's linker will execute it but does
+     * not add that directory to the child process library search path automatically.
+     */
+    fun processBuilder(command: List<String>): ProcessBuilder {
+        val builder = ProcessBuilder(command)
+        val pojavFfmpeg = System.getenv("POJAV_FFMPEG_PATH")?.takeIf { it.isNotBlank() }
+        if (pojavFfmpeg != null && command.firstOrNull() == pojavFfmpeg) {
+            val libDir = File(pojavFfmpeg).parentFile?.absolutePath
+            if (!libDir.isNullOrBlank()) {
+                val env = builder.environment()
+                val current = env["LD_LIBRARY_PATH"]?.takeIf { it.isNotBlank() }
+                    ?: System.getenv("LD_LIBRARY_PATH")?.takeIf { it.isNotBlank() }
+                env["LD_LIBRARY_PATH"] = if (current == null) libDir else "$libDir:$current"
+            }
+        }
+        return builder
+    }
+
+    /**
      * Resolves the `FFmpeg` binary in the background to minimize latency on first use, and probes
      * its optional filters while it is there — otherwise that probe spawns its own `ffmpeg -filters`
      * synchronously inside the first playback launch, right where latency is most visible.
@@ -45,6 +65,16 @@ object FFmpegBinary {
     }
 
     private fun resolve(): String? {
+        val pojavFfmpeg = System.getenv("POJAV_FFMPEG_PATH")?.takeIf { it.isNotBlank() }
+        if (pojavFfmpeg != null) {
+            val supplied = File(pojavFfmpeg)
+            if (supplied.isFile && supplied.length() > 0L) {
+                logger.info("Using Android launcher FFmpeg: $pojavFfmpeg.")
+                return supplied.absolutePath
+            }
+            logger.warn("POJAV_FFMPEG_PATH points to an unusable file: $pojavFfmpeg.")
+            return null // Never download an incompatible desktop Linux binary on Android.
+        }
         val p = detectPlatform() ?: run {
             logger.warn("No bundled binary URL for this OS / arch; trying system FFmpeg.")
             return findSystemFfmpeg()

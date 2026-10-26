@@ -13,8 +13,16 @@ import java.util.concurrent.locks.LockSupport
  * concrete types because their inputs differ (an owned [Process] vs. a native handle).
  */
 internal interface FramePipe {
-    /** Updated by the reader thread on every frame; used by the watchdog to detect stalls. */
+    /** Updated by the reader thread on every decoded frame. */
     val lastFrameReceivedNanos: AtomicLong
+
+    /**
+     * Updated when a real playback frame reaches presentation. Native seek-preview keyframes do not
+     * count: they may stay on screen while libav is still pre-rolling to the requested rejoin point.
+     * Pipes without a separate playout stage fall back to the decode-arrival stamp.
+     */
+    val lastFramePresentedNanos: AtomicLong
+        get() = lastFrameReceivedNanos
 
     /** Set by the popout window to receive raw frames. Called on the reader thread. */
     var popoutFrameSink: ((ByteBuffer, Int, Int, FramePixelFormat) -> Unit)?

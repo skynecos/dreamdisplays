@@ -34,6 +34,7 @@ import java.nio.ByteBuffer
  * which the fences also make safe.
  */
 class AsyncTextureUploader(private val stateCache: Boolean) : TextureUploaderService {
+    private val androidCompat = System.getenv("POJAV_FFMPEG_PATH")?.isNotBlank() == true
     private class Slot {
         /** GL buffer id (0 until created). */
         var pbo: Int = 0
@@ -57,7 +58,8 @@ class AsyncTextureUploader(private val stateCache: Boolean) : TextureUploaderSer
     private val persistentMapSupported: Boolean by lazy {
         runCatching {
             val caps = GL.getCapabilities()
-            caps.OpenGL44 || caps.GL_ARB_buffer_storage
+            !androidCompat && (caps.OpenGL44 || caps.GL_ARB_buffer_storage)
+                    && caps.glMemoryBarrier != 0L
         }.getOrDefault(false)
     }
 
@@ -115,6 +117,22 @@ class AsyncTextureUploader(private val stateCache: Boolean) : TextureUploaderSer
         val size = w * h * format.bytesPerPixel
         if (size <= 0 || src.remaining() < size) return
 
+        if (androidCompat) {
+            val view = src.duplicate()
+            view.limit(view.position() + size)
+            bindTexture(textureId)
+            pixelStore(GL11.GL_UNPACK_ALIGNMENT, format.unpackAlignment)
+            pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0)
+            pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0)
+            pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0)
+            GL11.glTexSubImage2D(
+                GL11.GL_TEXTURE_2D, 0, 0, 0, w, h,
+                format.glFormat, GL11.GL_UNSIGNED_BYTE, view,
+            )
+            pixelStore(GL11.GL_UNPACK_ALIGNMENT, 4)
+            return
+        }
+
         // Pick the next slot and advance the ring
         val slot = slots[ringIndex]
         ringIndex = (ringIndex + 1) % PBO_COUNT
@@ -161,6 +179,29 @@ class AsyncTextureUploader(private val stateCache: Boolean) : TextureUploaderSer
         val vSize = vW * vH
         val total = ySize + uSize + vSize
         if (total <= 0 || src.remaining() < total) return
+
+        if (androidCompat) {
+            val base = src.position()
+            fun plane(offset: Int, size: Int): ByteBuffer {
+                val v = src.duplicate()
+                v.position(base + offset)
+                v.limit(base + offset + size)
+                return v.slice()
+            }
+            pixelStore(GL11.GL_UNPACK_ALIGNMENT, 1)
+            pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0)
+            pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0)
+            pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0)
+            val glFormat = UploadPixelFormat.R8.glFormat
+            bindTexture(yId)
+            GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, yW, yH, glFormat, GL11.GL_UNSIGNED_BYTE, plane(0, ySize))
+            bindTexture(uId)
+            GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, uW, uH, glFormat, GL11.GL_UNSIGNED_BYTE, plane(ySize, uSize))
+            bindTexture(vId)
+            GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, vW, vH, glFormat, GL11.GL_UNSIGNED_BYTE, plane(ySize + uSize, vSize))
+            pixelStore(GL11.GL_UNPACK_ALIGNMENT, 4)
+            return
+        }
 
         val slot = slots[ringIndex]
         ringIndex = (ringIndex + 1) % PBO_COUNT

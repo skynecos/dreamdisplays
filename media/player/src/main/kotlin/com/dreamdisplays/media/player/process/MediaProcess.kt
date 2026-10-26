@@ -61,7 +61,7 @@ object MediaProcess {
         ffmpeg: String, url: String, w: Int, h: Int, offsetNanos: Long, hwAccel: HwAccelBackend, fps: Double,
         alreadyResolved: Boolean = false, seekByDecoding: Boolean = false,
     ): Process =
-        ProcessBuilder(
+        FFmpegBinary.processBuilder(
             videoArgs(
                 ffmpeg, url, w, h, offsetNanos, hwAccel, VideoTransport.PPM, fps, alreadyResolved, seekByDecoding,
             ),
@@ -123,7 +123,7 @@ object MediaProcess {
                 ]
             )
         }
-        return ProcessBuilder(cmd).start()
+        return FFmpegBinary.processBuilder(cmd).start()
     }
 
     /**
@@ -139,7 +139,7 @@ object MediaProcess {
         ).apply {
             addAll(["-vn", "-f", "s16le", "-ar", sampleRate.toString(), "-ac", "2", "-"])
         }
-        return ProcessBuilder(cmd).start()
+        return FFmpegBinary.processBuilder(cmd).start()
     }
 
     /** Builds `FFmpeg` process that decodes audio from HLS segments (MPEG-TS or fragmented MP4) piped to stdin. */
@@ -152,7 +152,7 @@ object MediaProcess {
             "-i", "pipe:0",
             "-vn", "-f", "s16le", "-ar", sampleRate.toString(), "-ac", "2", "-",
         ]
-        return ProcessBuilder(cmd).start()
+        return FFmpegBinary.processBuilder(cmd).start()
     }
 
     /**
